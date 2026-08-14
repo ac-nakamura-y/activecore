@@ -29,6 +29,54 @@ INSERT OR IGNORE INTO tags (name, category) VALUES
   ('資生堂', 'client'),
   ('イオンペット', 'client'),
   ('PoC型化', 'project'),
-  ('品質管理エージェント', 'project'),
   ('マーケOps', 'team'),
   ('FDE', 'team');
+
+CREATE TABLE IF NOT EXISTS tag_rules (
+  tag     TEXT NOT NULL,
+  pattern TEXT NOT NULL,
+  PRIMARY KEY (tag, pattern),
+  FOREIGN KEY (tag) REFERENCES tags(name)
+);
+
+DELETE FROM tag_rules;
+
+INSERT INTO tag_rules (tag, pattern) VALUES
+  -- FDE
+  ('FDE', 'FDEデイリー'),
+  ('FDE', '[マーケOps] Weekly MTG'),
+  ('FDE', '1on1'),
+  ('FDE', '課題確認の定例会（NBナラマケ-AC）'),
+  ('FDE', 'Opsコスト削減に向けた議論'),
+  ('FDE', 'FDE会'),
+  -- キナリ
+  ('キナリ', 'キナリ様内部定例'),
+  ('キナリ', '[SABON様] Ops定例'),
+  ('キナリ', '【Marutto 1to1】キナリ様定例'),
+  -- マーケOps
+  ('マーケOps', 'maruttoデイリー'),
+  ('マーケOps', '[マーケOps] Weekly MTG'),
+  ('マーケOps', '課題確認の定例会（NBナラマケ-AC）'),
+  ('マーケOps', 'Opsコスト削減に向けた議論'),
+  ('マーケOps', '【Opsチーム】PoCの型化検討分科会'),
+  ('マーケOps', '[SABON様] Ops定例'),
+  ('マーケOps', 'maruttoチームプランニング-ops'),
+  -- 資生堂
+  ('資生堂', '【Meet】 エリクシールmarutto内部定例'),
+  ('資生堂', '資生堂/エリクシール様　制作定期MTG'),
+  ('資生堂', 'Marutto1to1定例'),
+  ('資生堂', '[Meet]エリクシールmaruttoラップアップ'),
+  ('資生堂', 'エリクシール AC内部定例'),
+  -- イオンペット
+  ('イオンペット', 'イオンペットさま内部定例'),
+  ('イオンペット', '【社外/Meet】イオンペットさま 定例（marutto1to1）'),
+  -- SABON
+  ('SABON', '【Marutto1to1】SABONさま定例'),
+  ('SABON', 'SABON内部定例'),
+  ('SABON', '[SABON様] Ops定例'),
+  -- 阪急交通社
+  ('阪急交通社', '[マーケOps] Weekly MTG'),
+  ('阪急交通社', '確定：阪急さま定例'),
+  -- トリプルエス
+  ('トリプルエス', '課題確認の定例会（NBナラマケ-AC）'),
+  ('トリプルエス', '確定：トリプルエスさま定例');

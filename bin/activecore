@@ -10,12 +10,12 @@ LOG="$TMP_DIR/summarize.log"
 usage() {
   cat <<EOF
 usage:
-  activecore save  --title TITLE --source SOURCE --content-file PATH [--tag TAG ...]
+  activecore save  --title TITLE --source SOURCE --content-file PATH [--tag TAG ...] [--require-tag]
   activecore summarize ID --content-file PATH
   activecore get ID
-  activecore query [--tag TAG ...] [KEYWORD ...]
-  activecore list [--limit N] [--tag TAG]
+  activecore query|list [--limit N] [--tag TAG ...] [KEYWORD ...]
   activecore tag list
+  activecore tag infer TEXT...
   activecore tag add ID --tag TAG [...]
   activecore tag remove ID --tag TAG [...]
   activecore tag set ID --tag TAG [...]
@@ -24,6 +24,7 @@ examples:
   activecore save --title "要件整理" --source "https://example.backlog.com/view/PROJ-1" --content-file /tmp/body.md --tag トリプルエス --tag FDE
   activecore get 550e8400-e29b-41d4-a716-446655440000
   activecore query --tag トリプルエス 要件
+  activecore query --limit 10
   activecore tag list
 EOF
 }
@@ -43,24 +44,63 @@ now_iso() {
   date +"%Y-%m-%dT%H:%M:%S%z"
 }
 
+abs_path() {
+  local path="$1" dir base
+  dir="$(cd "$(dirname "$path")" && pwd)"
+  base="$(basename "$path")"
+  printf '%s/%s' "$dir" "$base"
+}
+
+normalize_source() {
+  local source="$1"
+  if [[ "$source" =~ docs\.google\.com/document/d/([a-zA-Z0-9_-]+) ]]; then
+    printf 'https://docs.google.com/document/d/%s/edit' "${BASH_REMATCH[1]}"
+  elif [[ "$source" =~ docs\.google\.com/presentation/d/([a-zA-Z0-9_-]+) ]]; then
+    printf 'https://docs.google.com/presentation/d/%s/edit' "${BASH_REMATCH[1]}"
+  elif [[ -e "$source" ]]; then
+    local dir base
+    dir="$(cd "$(dirname "$source")" && pwd)"
+    base="$(basename "$source")"
+    printf '%s/%s' "$dir" "$base"
+  else
+    printf '%s' "$source"
+  fi
+}
+
+apply_schema_ddl() {
+  awk '/^CREATE TABLE IF NOT EXISTS /,/^);$/' "$SCHEMA" | sqlite3 "$DB"
+}
+
 init_db() {
   require_cmd sqlite3
   mkdir -p "$ROOT/db" "$TMP_DIR"
   if [[ ! -f "$DB" ]]; then
     sqlite3 "$DB" < "$SCHEMA"
   else
-    sqlite3 "$DB" < "$SCHEMA" >/dev/null 2>&1 || true
-    if ! sqlite3 "$DB" "PRAGMA table_info(refs);" | grep -q '|content|'; then
-      sqlite3 "$DB" "ALTER TABLE refs ADD COLUMN content TEXT;"
-    fi
+    apply_schema_ddl
   fi
 }
 
 get_id_by_source() {
   local source="$1"
-  local esc
-  esc="$(sql_escape "$source")"
-  sqlite3 "$DB" "SELECT id FROM refs WHERE source = '$esc' LIMIT 1;"
+  local normalized esc id
+  normalized="$(normalize_source "$source")"
+  esc="$(sql_escape "$normalized")"
+  id="$(sqlite3 "$DB" "SELECT id FROM refs WHERE source = '$esc' LIMIT 1;")"
+  if [[ -n "$id" ]]; then
+    printf '%s' "$id"
+    return
+  fi
+  if [[ "$normalized" =~ /document/d/([a-zA-Z0-9_-]+) ]]; then
+    esc="$(sql_escape "${BASH_REMATCH[1]}")"
+    id="$(sqlite3 "$DB" "SELECT id FROM refs WHERE source LIKE '%/document/d/' || '$esc' || '/%' LIMIT 1;")"
+  elif [[ "$normalized" =~ /presentation/d/([a-zA-Z0-9_-]+) ]]; then
+    esc="$(sql_escape "${BASH_REMATCH[1]}")"
+    id="$(sqlite3 "$DB" "SELECT id FROM refs WHERE source LIKE '%/presentation/d/' || '$esc' || '/%' LIMIT 1;")"
+  fi
+  if [[ -n "$id" ]]; then
+    printf '%s' "$id"
+  fi
 }
 
 ref_exists() {
@@ -106,23 +146,21 @@ add_ref_tags() {
 
 get_ref_tags() {
   local id="$1"
-  local esc
+  local esc order
   esc="$(sql_escape "$id")"
+  order="$(tag_category_order_sql)"
   sqlite3 -separator ', ' "$DB" \
     "SELECT group_concat(tag, ', ') FROM (
        SELECT t.name AS tag
        FROM ref_tags rt
        JOIN tags t ON t.name = rt.tag
        WHERE rt.ref_id = '$esc'
-       ORDER BY
-         CASE t.category
-           WHEN 'client' THEN 1
-           WHEN 'project' THEN 2
-           WHEN 'team' THEN 3
-           ELSE 4
-         END,
-         t.name
+       ORDER BY $order, t.name
      );"
+}
+
+tag_category_order_sql() {
+  printf "CASE t.category WHEN 'client' THEN 1 WHEN 'project' THEN 2 WHEN 'team' THEN 3 ELSE 4 END"
 }
 
 parse_tags_and_rest() {
@@ -150,6 +188,7 @@ parse_tags_and_rest() {
 cmd_save() {
   local title="" source="" content_file=""
   local tags=()
+  local require_tag=0
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -169,6 +208,10 @@ cmd_save() {
         tags+=("$2")
         shift 2
         ;;
+      --require-tag)
+        require_tag=1
+        shift
+        ;;
       *)
         echo "error: unknown argument: $1" >&2
         usage >&2
@@ -187,22 +230,39 @@ cmd_save() {
   fi
 
   init_db
+  source="$(normalize_source "$source")"
+
+  local id ts esc_title esc_source abs_content is_new=0
+  ts="$(now_iso)"
+  id="$(get_id_by_source "$source")"
+  if [[ -z "$id" ]]; then
+    is_new=1
+  fi
+
+  if [[ ${#tags[@]} -eq 0 && "$is_new" -eq 1 ]]; then
+    local inferred
+    while IFS= read -r inferred; do
+      [[ -n "$inferred" ]] && tags+=("$inferred")
+    done < <(infer_tags_from_text "$title")
+  fi
+
+  if [[ "$require_tag" -eq 1 && ${#tags[@]} -eq 0 ]]; then
+    echo "error: no tags matched title; confirm tags with user before saving" >&2
+    exit 1
+  fi
 
   if [[ ${#tags[@]} -gt 0 ]]; then
     validate_tags "${tags[@]}"
   fi
-
-  local id ts esc_title esc_source abs_content
-  ts="$(now_iso)"
-  id="$(get_id_by_source "$source")"
-  abs_content="$(cd "$(dirname "$content_file")" && pwd)/$(basename "$content_file")"
+  abs_content="$(abs_path "$content_file")"
   esc_title="$(sql_escape "$title")"
   esc_source="$(sql_escape "$source")"
-  local esc_path
+  local esc_path esc_id
   esc_path="$(sql_escape "$abs_content")"
 
   if [[ -n "$id" ]]; then
-    sqlite3 "$DB" "UPDATE refs SET title = '$esc_title', summary = NULL, content = readfile('$esc_path'), updated_at = '$ts' WHERE source = '$esc_source';"
+    esc_id="$(sql_escape "$id")"
+    sqlite3 "$DB" "UPDATE refs SET title = '$esc_title', summary = NULL, content = readfile('$esc_path'), source = '$esc_source', updated_at = '$ts' WHERE id = '$esc_id';"
   else
     require_cmd uuidgen
     id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
@@ -265,11 +325,9 @@ cmd_summarize() {
 
   local summary=""
   if command -v agent >/dev/null 2>&1; then
-    local abs_content
-    abs_content="$(cd "$(dirname "$content_file")" && pwd)/$(basename "$content_file")"
     summary="$(
       agent -p --model auto --output-format text \
-        "@${abs_content} 以下の文書を200文字以内の日本語で要約してください。要約の本文のみを出力し、前置きや説明は不要です。" \
+        "@$(abs_path "$content_file") 以下の文書を200文字以内の日本語で要約してください。要約の本文のみを出力し、前置きや説明は不要です。" \
         2>/dev/null || true
     )"
     summary="$(printf "%s" "$summary" | sed '/./,$!d' | head -n 1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
@@ -299,14 +357,13 @@ cmd_get() {
 
   init_db
 
-  local id esc has_row
+  local id esc
   id="$1"
-  esc="$(sql_escape "$id")"
-  has_row="$(sqlite3 "$DB" "SELECT 1 FROM refs WHERE id = '$esc' LIMIT 1;")"
-  if [[ -z "$has_row" ]]; then
+  if ! ref_exists "$id"; then
     echo "error: ref not found: $id" >&2
     exit 1
   fi
+  esc="$(sql_escape "$id")"
 
   local has_content
   has_content="$(sqlite3 "$DB" "SELECT CASE WHEN content IS NULL OR content = '' THEN 0 ELSE 1 END FROM refs WHERE id = '$esc';")"
@@ -361,32 +418,10 @@ print_ref_markdown() {
   printf -- "- updated: %s\n\n" "$updated_at"
 }
 
-cmd_query() {
-  init_db
-
-  parse_tags_and_rest "$@"
-  local tags=("${PARSED_TAGS[@]+"${PARSED_TAGS[@]}"}")
-  local keywords=("${PARSED_REST[@]+"${PARSED_REST[@]}"}")
-
-  if [[ ${#tags[@]} -eq 0 && ${#keywords[@]} -eq 0 ]]; then
-    cmd_list --limit 20
-    return
-  fi
-
-  if [[ ${#tags[@]} -gt 0 ]]; then
-    validate_tags "${tags[@]}"
-  fi
-
-  local where tag_where
-  where="1=1"
-  if [[ ${#keywords[@]} -gt 0 ]]; then
-    where="$(build_like_clause "${keywords[@]}")"
-  fi
-  tag_where="1=1"
-  if [[ ${#tags[@]} -gt 0 ]]; then
-    tag_where="$(build_tag_clause "${tags[@]}")"
-  fi
-
+print_refs() {
+  local where="$1"
+  local limit_clause="${2:-}"
+  local empty_msg="${3:-No references matched.}"
   local found=0
   while IFS='|' read -r id title summary source created_at updated_at; do
     [[ -z "${id:-}" ]] && continue
@@ -396,18 +431,19 @@ cmd_query() {
     sqlite3 -separator '|' "$DB" \
       "SELECT id, title, IFNULL(summary, ''), source, created_at, updated_at
        FROM refs
-       WHERE ($where) AND ($tag_where)
-       ORDER BY updated_at DESC;"
+       WHERE $where
+       ORDER BY updated_at DESC
+       $limit_clause;"
   )
-
   if [[ "$found" -eq 0 ]]; then
-    echo "No references matched."
+    echo "$empty_msg"
   fi
 }
 
-cmd_list() {
-  local limit=20
-  local tags=()
+cmd_query() {
+  init_db
+
+  local limit="" tags=() keywords=()
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -420,54 +456,63 @@ cmd_list() {
         shift 2
         ;;
       *)
-        echo "error: unknown argument: $1" >&2
-        exit 1
+        keywords+=("$1")
+        shift
         ;;
     esac
   done
-
-  init_db
 
   if [[ ${#tags[@]} -gt 0 ]]; then
     validate_tags "${tags[@]}"
   fi
 
-  local tag_where="1=1"
+  local where tag_where limit_clause empty_msg
+  where="1=1"
+  tag_where="1=1"
+  if [[ ${#keywords[@]} -gt 0 ]]; then
+    where="$(build_like_clause "${keywords[@]}")"
+  fi
   if [[ ${#tags[@]} -gt 0 ]]; then
     tag_where="$(build_tag_clause "${tags[@]}")"
   fi
 
-  local found=0
-  while IFS='|' read -r id title summary source created_at updated_at; do
-    [[ -z "${id:-}" ]] && continue
-    print_ref_markdown "$id" "$title" "${summary:-}" "$source" "$created_at" "$updated_at"
-    found=1
-  done < <(
-    sqlite3 -separator '|' "$DB" \
-      "SELECT id, title, IFNULL(summary, ''), source, created_at, updated_at
-       FROM refs
-       WHERE $tag_where
-       ORDER BY updated_at DESC
-       LIMIT $limit;"
-  )
-
-  if [[ "$found" -eq 0 ]]; then
-    echo "No references saved yet."
+  empty_msg="No references matched."
+  if [[ ${#keywords[@]} -eq 0 ]]; then
+    empty_msg="No references saved yet."
+    [[ -z "$limit" ]] && limit=20
   fi
+  if [[ -n "$limit" ]]; then
+    limit_clause="LIMIT $limit"
+  fi
+
+  print_refs "($where) AND ($tag_where)" "$limit_clause" "$empty_msg"
 }
 
 category_label() {
   case "$1" in
-    client) printf "クライアント系" ;;
-    project) printf "プロジェクト系" ;;
-    team) printf "チーム系" ;;
+    client) printf "クライアント" ;;
+    project) printf "プロジェクト" ;;
+    team) printf "チーム" ;;
     *) printf "%s" "$1" ;;
   esac
 }
 
+infer_tags_from_text() {
+  local text="$1"
+  local esc
+  esc="$(sql_escape "$text")"
+  sqlite3 "$DB" \
+    "SELECT DISTINCT tag
+     FROM tag_rules, (SELECT '$esc' AS text)
+     WHERE instr(lower(text), lower(pattern)) > 0
+     ORDER BY tag;"
+}
+
 cmd_tag_list() {
   init_db
-  local category name current=""
+  local category name current="" order
+  order="$(tag_category_order_sql)"
+  order="${order/t.category/category}"
   while IFS='|' read -r category name; do
     if [[ "$category" != "$current" ]]; then
       if [[ -n "$current" ]]; then
@@ -480,15 +525,44 @@ cmd_tag_list() {
   done < <(
     sqlite3 -separator '|' "$DB" \
       "SELECT category, name FROM tags
-       ORDER BY
-         CASE category
-           WHEN 'client' THEN 1
-           WHEN 'project' THEN 2
-           WHEN 'team' THEN 3
-           ELSE 4
-         END,
-         name;"
+       ORDER BY $order, name;"
   )
+}
+
+require_ref_and_tags() {
+  local id="$1"
+  local require_tags="$2"
+  shift 2
+
+  parse_tags_and_rest "$@"
+  if [[ ${#PARSED_REST[@]} -gt 0 ]]; then
+    echo "error: unexpected argument: ${PARSED_REST[0]}" >&2
+    exit 1
+  fi
+  if [[ "$require_tags" -eq 1 && ${#PARSED_TAGS[@]} -eq 0 ]]; then
+    echo "error: at least one --tag is required" >&2
+    exit 1
+  fi
+
+  init_db
+  if ! ref_exists "$id"; then
+    echo "error: ref not found: $id" >&2
+    exit 1
+  fi
+  if [[ ${#PARSED_TAGS[@]} -gt 0 ]]; then
+    validate_tags "${PARSED_TAGS[@]}"
+  fi
+}
+
+print_ref_tags_line() {
+  local id="$1"
+  local tags
+  tags="$(get_ref_tags "$id")"
+  if [[ -n "$tags" ]]; then
+    printf "tags: %s\n" "$tags"
+  else
+    echo "tags: (なし)"
+  fi
 }
 
 cmd_tag_add() {
@@ -498,25 +572,9 @@ cmd_tag_add() {
   fi
   local id="$1"
   shift
-
-  parse_tags_and_rest "$@"
-  if [[ ${#PARSED_REST[@]} -gt 0 ]]; then
-    echo "error: unexpected argument: ${PARSED_REST[0]}" >&2
-    exit 1
-  fi
-  if [[ ${#PARSED_TAGS[@]} -eq 0 ]]; then
-    echo "error: at least one --tag is required" >&2
-    exit 1
-  fi
-
-  init_db
-  if ! ref_exists "$id"; then
-    echo "error: ref not found: $id" >&2
-    exit 1
-  fi
-  validate_tags "${PARSED_TAGS[@]}"
+  require_ref_and_tags "$id" 1 "$@"
   add_ref_tags "$id" "${PARSED_TAGS[@]}"
-  printf "tags: %s\n" "$(get_ref_tags "$id")"
+  print_ref_tags_line "$id"
 }
 
 cmd_tag_remove() {
@@ -526,23 +584,7 @@ cmd_tag_remove() {
   fi
   local id="$1"
   shift
-
-  parse_tags_and_rest "$@"
-  if [[ ${#PARSED_REST[@]} -gt 0 ]]; then
-    echo "error: unexpected argument: ${PARSED_REST[0]}" >&2
-    exit 1
-  fi
-  if [[ ${#PARSED_TAGS[@]} -eq 0 ]]; then
-    echo "error: at least one --tag is required" >&2
-    exit 1
-  fi
-
-  init_db
-  if ! ref_exists "$id"; then
-    echo "error: ref not found: $id" >&2
-    exit 1
-  fi
-  validate_tags "${PARSED_TAGS[@]}"
+  require_ref_and_tags "$id" 1 "$@"
 
   local tag esc_id esc_tag
   esc_id="$(sql_escape "$id")"
@@ -550,13 +592,7 @@ cmd_tag_remove() {
     esc_tag="$(sql_escape "$tag")"
     sqlite3 "$DB" "DELETE FROM ref_tags WHERE ref_id = '$esc_id' AND tag = '$esc_tag';"
   done
-  local tags
-  tags="$(get_ref_tags "$id")"
-  if [[ -n "$tags" ]]; then
-    printf "tags: %s\n" "$tags"
-  else
-    echo "tags: (なし)"
-  fi
+  print_ref_tags_line "$id"
 }
 
 cmd_tag_set() {
@@ -566,37 +602,18 @@ cmd_tag_set() {
   fi
   local id="$1"
   shift
-
-  parse_tags_and_rest "$@"
-  if [[ ${#PARSED_REST[@]} -gt 0 ]]; then
-    echo "error: unexpected argument: ${PARSED_REST[0]}" >&2
-    exit 1
-  fi
-
-  init_db
-  if ! ref_exists "$id"; then
-    echo "error: ref not found: $id" >&2
-    exit 1
-  fi
+  require_ref_and_tags "$id" 0 "$@"
 
   clear_ref_tags "$id"
   if [[ ${#PARSED_TAGS[@]} -gt 0 ]]; then
-    validate_tags "${PARSED_TAGS[@]}"
     add_ref_tags "$id" "${PARSED_TAGS[@]}"
   fi
-
-  local tags
-  tags="$(get_ref_tags "$id")"
-  if [[ -n "$tags" ]]; then
-    printf "tags: %s\n" "$tags"
-  else
-    echo "tags: (なし)"
-  fi
+  print_ref_tags_line "$id"
 }
 
 cmd_tag() {
   if [[ $# -lt 1 ]]; then
-    echo "error: tag subcommand required (list|add|remove|set)" >&2
+    echo "error: tag subcommand required (list|infer|add|remove|set)" >&2
     exit 1
   fi
   local sub="$1"
@@ -604,6 +621,14 @@ cmd_tag() {
   case "$sub" in
     list)
       cmd_tag_list
+      ;;
+    infer)
+      init_db
+      if [[ $# -eq 0 ]]; then
+        echo "error: infer requires text (e.g. event summary)" >&2
+        exit 1
+      fi
+      infer_tags_from_text "$*"
       ;;
     add)
       cmd_tag_add "$@"
@@ -644,7 +669,7 @@ main() {
       cmd_query "$@"
       ;;
     list)
-      cmd_list "$@"
+      cmd_query "$@"
       ;;
     tag)
       cmd_tag "$@"
