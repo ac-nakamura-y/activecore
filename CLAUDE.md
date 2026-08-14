@@ -132,7 +132,7 @@ dedup のため `--source` は次の形式に統一する。
 | :-- | :-- |
 | Backlog 課題 | `get_issue` , `get_issue_comments` |
 | Slack | `slack_read_thread` / `slack_read_channel` |
-| Google Doc / Slide | `read_file_content`（失敗時は `.claude/skills/google-drive` の Chrome export） |
+| Google Doc / Slide | `read_file_content` |
 | Notion | Notion MCP |
 | ローカル PDF / HTML | ファイル read |
 
