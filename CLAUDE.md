@@ -30,11 +30,13 @@ Google Meet の Gemini 議事録は [Meeting notes sync](#meeting-notes-sync) �
 
 ```
 activecore/
-  CLAUDE.md          # 運用ルール・使い方
-  schema.sql         # DB テーブル定義・タグ seed・推定ルール
-  bin/activecore     # CLI（ディレクトリではなく実行ファイル 1 本）
-  db/refs.sqlite     # 実データ（実行時に自動生成、Git 管理外）
-  tmp/               # 要約処理の一時置き場（tmp/summarize.log にログ）
+  CLAUDE.md                        # 運用ルール・使い方
+  schema.sql                       # DB テーブル定義・タグ seed・推定ルール
+  bin/activecore                   # CLI（ディレクトリではなく実行ファイル 1 本）
+  bin/meeting-notes-sync-loop      # 議事録同期ループ（平日 10:00–18:30、毎時 :15 / :45）
+  bin/sync-meeting-notes.prompt.md # 同期 Agent 向け手順
+  db/refs.sqlite                   # 実データ（実行時に自動生成、Git 管理外）
+  tmp/                             # 要約処理の一時置き場（tmp/summarize.log にログ）
 ```
 
 `schema.sql` は DB ファイル `refs.sqlite` とは別物。初回は `init_db` が適用する。seed 更新は `sqlite3 db/refs.sqlite < schema.sql`。要約処理: `save` 時に `--content-file` のコピーを `tmp/{id}.md` に置き、バックグラウンドの `summarize` が Cursor CLI（`agent -p`）に渡す。完了後 `tmp/{id}.md` は削除する。
@@ -105,7 +107,24 @@ dedup のため `--source` は次の形式に統一する。
 
 `--require-tag` でタグ推定に失敗した場合、Agent はユーザーにタグを確認してから `--tag` を付けて save する。推測でタグを付けない。
 
-定期実行が必要なら Cursor Automation（cron トリガー + 上記 MCP）を使う。
+### 定期実行（平日 10:00–18:30、毎時 :15 / :45）
+
+Google MCP は Cursor IDE の user plugin 経由のみ動作するため、launchd / cron は使わない。Cursor の**監視シェル**で supervisor を起動し、3 層で常時維持する。
+
+```bash
+~/activecore/bin/meeting-notes-sync-loop supervisor  # 推奨（supervisor → watchdog → loop）
+~/activecore/bin/meeting-notes-sync-loop ensure       # 停止時は Agent が監視シェルで supervisor を起動
+~/activecore/bin/meeting-notes-sync-loop stop         # 停止
+~/activecore/bin/meeting-notes-sync-loop status
+```
+
+| 層 | 役割 | 間隔 |
+| :-- | :-- | :-- |
+| supervisor | watchdog の死活監視・再起動 | 30 秒 |
+| watchdog | loop の死活監視・再起動 | 5 分 |
+| loop | スケジュールに従い `AGENT_LOOP_TICK` を出力 | :15 / :45 |
+
+`sessionStart` hook（`.cursor/hooks.json`）がセッション開始時に `ensure` を実行する。Agent はタスク着手前に `ensure` を実行し、停止していれば**監視シェル**で `supervisor` を起動する。各ティック処理の最後にも `ensure` する。
 
 ## Notes
 

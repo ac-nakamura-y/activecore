@@ -1,0 +1,423 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="${ACTIVECORE_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+PID_FILE="$ROOT/tmp/meeting-notes-sync-loop.pid"
+WATCHDOG_PID_FILE="$ROOT/tmp/meeting-notes-sync-watchdog.pid"
+SUPERVISOR_PID_FILE="$ROOT/tmp/meeting-notes-sync-supervisor.pid"
+HEARTBEAT_FILE="$ROOT/tmp/meeting-notes-sync.heartbeat"
+LOG="$ROOT/tmp/meeting-notes-sync.log"
+PROMPT_FILE="$ROOT/bin/sync-meeting-notes.prompt.md"
+
+WINDOW_START="${ACTIVECORE_SYNC_WINDOW_START:-10:00}"
+WINDOW_END="${ACTIVECORE_SYNC_WINDOW_END:-18:30}"
+SCHEDULE_MINUTES="${ACTIVECORE_SYNC_SCHEDULE_MINUTES:-15,45}"
+TZ_NAME="${ACTIVECORE_SYNC_TZ:-Asia/Tokyo}"
+WEEKDAYS_ONLY="${ACTIVECORE_SYNC_WEEKDAYS_ONLY:-1}"
+WATCHDOG_INTERVAL="${ACTIVECORE_SYNC_WATCHDOG_INTERVAL_SEC:-300}"
+SUPERVISOR_INTERVAL="${ACTIVECORE_SYNC_SUPERVISOR_INTERVAL_SEC:-30}"
+
+SENTINEL='AGENT_LOOP_TICK_meeting_notes_sync'
+PROMPT='Meeting notes sync: 終了済みカレンダーイベントの Gemini 議事録を activecore に登録。手順は ~/activecore/bin/sync-meeting-notes.prompt.md に従う。'
+
+usage() {
+  cat <<EOF
+usage: meeting-notes-sync-loop <command>
+
+Commands:
+  supervisor  推奨。supervisor → watchdog → loop を常時維持（平日 ${WINDOW_START}–${WINDOW_END}、毎時 :${SCHEDULE_MINUTES}）
+  watchdog    スケジューラ + loop 監視（通常は supervisor 経由）
+  run         スケジューラ本体
+  ensure      停止していれば supervisor を起動（Cursor 監視シェル向け）
+  stop        supervisor / watchdog / loop をすべて停止
+  status      稼働状況と次回ティック時刻
+  in-window   現在が実行時間内か判定
+
+Environment:
+  ACTIVECORE_SYNC_WINDOW_START            Window open (default: 10:00)
+  ACTIVECORE_SYNC_WINDOW_END              Window close (default: 18:30)
+  ACTIVECORE_SYNC_SCHEDULE_MINUTES        Minutes each hour (default: 15,45)
+  ACTIVECORE_SYNC_WATCHDOG_INTERVAL_SEC   Watchdog health check (default: 300)
+  ACTIVECORE_SYNC_SUPERVISOR_INTERVAL_SEC Supervisor health check (default: 30)
+  ACTIVECORE_SYNC_TZ                      IANA timezone (default: Asia/Tokyo)
+  ACTIVECORE_SYNC_WEEKDAYS_ONLY           1=Mon–Fri only (default: 1)
+
+Cursor IDE の監視シェルで supervisor を起動する。sessionStart hook と Agent ensure で自動復旧する。
+EOF
+}
+
+log_line() {
+  local ts
+  ts="$(TZ="$TZ_NAME" date +"%Y-%m-%dT%H:%M:%S%z")"
+  echo "$ts LOOP $*" | tee -a "$LOG"
+}
+
+emit_tick() {
+  local reason="${1:-tick}"
+  log_line "TICK reason=$reason"
+  printf '%s {"prompt":"%s"}\n' "$SENTINEL" "$PROMPT"
+}
+
+touch_heartbeat() {
+  date +%s >"$HEARTBEAT_FILE"
+}
+
+pid_alive() {
+  local pid_file="$1"
+  [[ -f "$pid_file" ]] || return 1
+  kill -0 "$(cat "$pid_file")" 2>/dev/null
+}
+
+schedule_python() {
+  python3 - "$WINDOW_START" "$WINDOW_END" "$SCHEDULE_MINUTES" "$TZ_NAME" "$WEEKDAYS_ONLY" "$1" <<'PY'
+import sys
+from datetime import datetime, timedelta, time
+from zoneinfo import ZoneInfo
+
+start_parts = [int(x) for x in sys.argv[1].split(":")]
+end_parts = [int(x) for x in sys.argv[2].split(":")]
+tick_minutes = [int(x) for x in sys.argv[3].split(",") if x.strip()]
+tz = ZoneInfo(sys.argv[4])
+weekdays_only = sys.argv[5] == "1"
+mode = sys.argv[6]
+
+start_t = time(start_parts[0], start_parts[1])
+end_t = time(end_parts[0], end_parts[1])
+
+def is_active_day(d):
+    return d.weekday() < 5 if weekdays_only else True
+
+def window_for(d):
+    if not is_active_day(d):
+        return None
+    s = datetime.combine(d, start_t, tzinfo=tz)
+    e = datetime.combine(d, end_t, tzinfo=tz)
+    return s, e
+
+def tick_times_for_day(d):
+    w = window_for(d)
+    if not w:
+        return []
+    start, end = w
+    out = []
+    for hour in range(24):
+        for minute in tick_minutes:
+            t = datetime.combine(d, time(hour, minute), tzinfo=tz)
+            if start <= t < end:
+                out.append(t)
+    return sorted(out)
+
+def next_tick(after):
+    d = after.date()
+    for _ in range(370):
+        for t in tick_times_for_day(d):
+            if t > after:
+                return t
+        d += timedelta(days=1)
+    raise RuntimeError("no tick found")
+
+now = datetime.now(tz)
+
+if mode == "in_window":
+    w = window_for(now.date())
+    if not w:
+        raise SystemExit(1)
+    start, end = w
+    raise SystemExit(0 if start <= now < end else 1)
+
+if mode == "status":
+    nxt = next_tick(now - timedelta(seconds=1))
+    w = window_for(now.date())
+    if w and w[0] <= now < w[1]:
+        print(f"in_window next_tick={nxt.isoformat()}")
+    elif w and now < w[0]:
+        print(f"before_window next_tick={nxt.isoformat()}")
+    else:
+        print(f"after_window next_tick={nxt.isoformat()}")
+    sys.exit(0)
+
+nxt = next_tick(now)
+sleep_sec = max(1, int((nxt - now).total_seconds()))
+print(sleep_sec)
+print("tick")
+PY
+}
+
+compute_sleep() {
+  schedule_python sleep
+}
+
+next_wake_human() {
+  schedule_python status
+}
+
+in_window() {
+  schedule_python in_window
+}
+
+loop_is_running() {
+  pid_alive "$PID_FILE"
+}
+
+watchdog_is_running() {
+  pid_alive "$WATCHDOG_PID_FILE"
+}
+
+supervisor_is_running() {
+  pid_alive "$SUPERVISOR_PID_FILE"
+}
+
+clear_stale_pid() {
+  local pid_file="$1"
+  local label="$2"
+  if [[ ! -f "$pid_file" ]]; then
+    return 0
+  fi
+  local pid
+  pid="$(cat "$pid_file")"
+  if kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$pid_file"
+  log_line "STALE_PID $label pid=$pid"
+}
+
+start_loop_background() {
+  clear_stale_pid "$PID_FILE" loop
+  if loop_is_running; then
+    return 0
+  fi
+  log_line "WATCHDOG starting loop"
+  "$0" run &
+  local i
+  for i in 1 2 3 4 5; do
+    sleep 1
+    loop_is_running && return 0
+  done
+  log_line "WATCHDOG failed to start loop"
+  return 1
+}
+
+start_watchdog_background() {
+  clear_stale_pid "$WATCHDOG_PID_FILE" watchdog
+  if watchdog_is_running; then
+    return 0
+  fi
+  log_line "SUPERVISOR starting watchdog"
+  "$0" watchdog &
+  local i
+  for i in 1 2 3 4 5; do
+    sleep 1
+    watchdog_is_running && return 0
+  done
+  log_line "SUPERVISOR failed to start watchdog"
+  return 1
+}
+
+stop_loop() {
+  clear_stale_pid "$PID_FILE" loop
+  if [[ ! -f "$PID_FILE" ]]; then
+    return 0
+  fi
+  local pid
+  pid="$(cat "$PID_FILE")"
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    log_line "STOP pid=$pid"
+  fi
+  rm -f "$PID_FILE"
+}
+
+stop_watchdog() {
+  clear_stale_pid "$WATCHDOG_PID_FILE" watchdog
+  if [[ ! -f "$WATCHDOG_PID_FILE" ]]; then
+    return 0
+  fi
+  local pid
+  pid="$(cat "$WATCHDOG_PID_FILE")"
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    log_line "WATCHDOG_STOP pid=$pid"
+  fi
+  rm -f "$WATCHDOG_PID_FILE"
+}
+
+stop_supervisor() {
+  clear_stale_pid "$SUPERVISOR_PID_FILE" supervisor
+  if [[ ! -f "$SUPERVISOR_PID_FILE" ]]; then
+    return 0
+  fi
+  local pid
+  pid="$(cat "$SUPERVISOR_PID_FILE")"
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    log_line "SUPERVISOR_STOP pid=$pid"
+  fi
+  rm -f "$SUPERVISOR_PID_FILE"
+}
+
+cmd_stop() {
+  stop_loop
+  stop_watchdog
+  stop_supervisor
+  rm -f "$HEARTBEAT_FILE"
+  echo "meeting-notes-sync-loop: stopped"
+}
+
+cmd_status() {
+  if [[ -f "$HEARTBEAT_FILE" ]]; then
+    echo "heartbeat age_sec=$(( $(date +%s) - $(cat "$HEARTBEAT_FILE") ))"
+  else
+    echo "heartbeat none"
+  fi
+  if supervisor_is_running; then
+    echo "supervisor running pid=$(cat "$SUPERVISOR_PID_FILE")"
+  else
+    echo "supervisor not running"
+  fi
+  if watchdog_is_running; then
+    echo "watchdog running pid=$(cat "$WATCHDOG_PID_FILE")"
+  else
+    echo "watchdog not running"
+  fi
+  if loop_is_running; then
+    echo "loop running pid=$(cat "$PID_FILE")"
+    next_wake_human
+    return 0
+  fi
+  echo "loop not running"
+  next_wake_human
+  return 1
+}
+
+cmd_ensure() {
+  mkdir -p "$ROOT/tmp"
+  clear_stale_pid "$SUPERVISOR_PID_FILE" supervisor
+  clear_stale_pid "$WATCHDOG_PID_FILE" watchdog
+  clear_stale_pid "$PID_FILE" loop
+
+  if supervisor_is_running; then
+    if ! watchdog_is_running; then
+      start_watchdog_background || true
+    elif ! loop_is_running; then
+      start_loop_background || true
+    fi
+    cmd_status
+    return 0
+  fi
+
+  if watchdog_is_running; then
+    if ! loop_is_running; then
+      start_loop_background || true
+    fi
+    echo "watchdog running without supervisor (pid=$(cat "$WATCHDOG_PID_FILE"))"
+    echo "hint: restart with supervisor for auto-recovery"
+    return 0
+  fi
+
+  echo "not running"
+  echo "start: ~/activecore/bin/meeting-notes-sync-loop supervisor  # in Cursor monitored shell"
+  return 1
+}
+
+cmd_supervisor() {
+  mkdir -p "$ROOT/tmp"
+  if supervisor_is_running; then
+    echo "meeting-notes-sync-supervisor: already running (pid=$(cat "$SUPERVISOR_PID_FILE"))"
+    cmd_ensure
+    exit 0
+  fi
+
+  echo $$ >"$SUPERVISOR_PID_FILE"
+  trap 'stop_loop; stop_watchdog; rm -f "$SUPERVISOR_PID_FILE"; log_line SUPERVISOR_EXIT pid=$$' EXIT INT TERM
+  log_line "SUPERVISOR_START pid=$$ interval=${SUPERVISOR_INTERVAL}s"
+  touch_heartbeat
+  start_watchdog_background || true
+
+  while true; do
+    sleep "$SUPERVISOR_INTERVAL"
+    touch_heartbeat
+    if ! watchdog_is_running; then
+      log_line "SUPERVISOR watchdog dead; restarting"
+      start_watchdog_background || true
+    elif ! loop_is_running; then
+      log_line "SUPERVISOR loop dead; nudging via watchdog"
+      start_loop_background || true
+    fi
+  done
+}
+
+cmd_watchdog() {
+  mkdir -p "$ROOT/tmp"
+  if watchdog_is_running; then
+    echo "meeting-notes-sync-watchdog: already running (pid=$(cat "$WATCHDOG_PID_FILE"))"
+    if ! loop_is_running; then
+      start_loop_background || true
+    fi
+    exit 0
+  fi
+
+  echo $$ >"$WATCHDOG_PID_FILE"
+  trap 'stop_loop; rm -f "$WATCHDOG_PID_FILE"; log_line WATCHDOG_EXIT pid=$$' EXIT INT TERM
+  log_line "WATCHDOG_START pid=$$ interval=${WATCHDOG_INTERVAL}s"
+  start_loop_background || true
+
+  while true; do
+    sleep "$WATCHDOG_INTERVAL"
+    if ! loop_is_running; then
+      log_line "WATCHDOG loop dead; restarting"
+      start_loop_background || true
+    fi
+  done
+}
+
+cmd_run() {
+  mkdir -p "$ROOT/tmp"
+  echo $$ >"$PID_FILE"
+  trap 'rm -f "$PID_FILE"; log_line STOP pid=$$' EXIT INT TERM
+
+  log_line "START pid=$$ window=${WINDOW_START}-${WINDOW_END} schedule=:${SCHEDULE_MINUTES} tz=${TZ_NAME} weekdays_only=${WEEKDAYS_ONLY}"
+
+  while true; do
+    plan="$(compute_sleep)"
+    sleep_sec="$(printf '%s\n' "$plan" | sed -n '1p')"
+    action="$(printf '%s\n' "$plan" | sed -n '2p')"
+    log_line "SLEEP sec=$sleep_sec action=$action"
+    sleep "$sleep_sec"
+    case "$action" in
+      tick)
+        emit_tick "$action"
+        ;;
+      wait)
+        log_line "WINDOW_CLOSED"
+        ;;
+      *)
+        log_line "ERROR unknown_action=$action"
+        ;;
+    esac
+  done
+}
+
+main() {
+  local cmd="${1:-}"
+  case "$cmd" in
+    supervisor) cmd_supervisor ;;
+    watchdog) cmd_watchdog ;;
+    run) cmd_run ;;
+    ensure) cmd_ensure ;;
+    stop) cmd_stop ;;
+    status) cmd_status ;;
+    in-window) in_window ;;
+    -h|--help|help|"")
+      usage
+      [[ -n "$cmd" ]] || exit 0
+      ;;
+    *)
+      echo "error: unknown command: $cmd" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"
