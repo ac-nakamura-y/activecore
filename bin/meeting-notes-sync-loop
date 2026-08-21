@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT="${ACTIVECORE_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
 PID_FILE="$ROOT/tmp/meeting-notes-sync-loop.pid"
 WATCHDOG_PID_FILE="$ROOT/tmp/meeting-notes-sync-watchdog.pid"
+SUPERVISOR_PID_FILE="$ROOT/tmp/meeting-notes-sync-supervisor.pid"
+HEARTBEAT_FILE="$ROOT/tmp/meeting-notes-sync.heartbeat"
 LOG="$ROOT/tmp/meeting-notes-sync.log"
 PROMPT_FILE="$ROOT/bin/sync-meeting-notes.prompt.md"
 
@@ -13,6 +15,7 @@ SCHEDULE_MINUTES="${ACTIVECORE_SYNC_SCHEDULE_MINUTES:-15,45}"
 TZ_NAME="${ACTIVECORE_SYNC_TZ:-Asia/Tokyo}"
 WEEKDAYS_ONLY="${ACTIVECORE_SYNC_WEEKDAYS_ONLY:-1}"
 WATCHDOG_INTERVAL="${ACTIVECORE_SYNC_WATCHDOG_INTERVAL_SEC:-300}"
+SUPERVISOR_INTERVAL="${ACTIVECORE_SYNC_SUPERVISOR_INTERVAL_SEC:-30}"
 
 SENTINEL='AGENT_LOOP_TICK_meeting_notes_sync'
 PROMPT='Meeting notes sync: 終了済みカレンダーイベントの Gemini 議事録を activecore に登録。手順は ~/activecore/bin/sync-meeting-notes.prompt.md に従う。'
@@ -22,23 +25,24 @@ usage() {
 usage: meeting-notes-sync-loop <command>
 
 Commands:
-  watchdog  推奨。ループを起動し、停止時に自動再起動（平日 ${WINDOW_START}–${WINDOW_END}、毎時 :${SCHEDULE_MINUTES}）
-  run       スケジューラ本体（通常は watchdog 経由で起動）
-  ensure    ループが動いていなければ起動（watchdog 稼働中なら watchdog に任せる）
-  stop      watchdog と loop を停止
-  status    稼働状況と次回ティック時刻
-  in-window 現在が実行時間内か判定
+  supervisor  推奨。supervisor → watchdog → loop を常時維持（平日 ${WINDOW_START}–${WINDOW_END}、毎時 :${SCHEDULE_MINUTES}）
+  watchdog    スケジューラ + loop 監視（通常は supervisor 経由）
+  run         スケジューラ本体
+  ensure      停止していれば supervisor を起動（Cursor 監視シェル向け）
+  stop        supervisor / watchdog / loop をすべて停止
+  status      稼働状況と次回ティック時刻
+  in-window   現在が実行時間内か判定
 
 Environment:
-  ACTIVECORE_SYNC_WINDOW_START          Window open (default: 10:00)
-  ACTIVECORE_SYNC_WINDOW_END            Window close (default: 18:30)
-  ACTIVECORE_SYNC_SCHEDULE_MINUTES      Minutes each hour (default: 15,45)
-  ACTIVECORE_SYNC_WATCHDOG_INTERVAL_SEC Health check interval (default: 300)
-  ACTIVECORE_SYNC_TZ                    IANA timezone (default: Asia/Tokyo)
-  ACTIVECORE_SYNC_WEEKDAYS_ONLY         1=Mon–Fri only (default: 1)
+  ACTIVECORE_SYNC_WINDOW_START            Window open (default: 10:00)
+  ACTIVECORE_SYNC_WINDOW_END              Window close (default: 18:30)
+  ACTIVECORE_SYNC_SCHEDULE_MINUTES        Minutes each hour (default: 15,45)
+  ACTIVECORE_SYNC_WATCHDOG_INTERVAL_SEC   Watchdog health check (default: 300)
+  ACTIVECORE_SYNC_SUPERVISOR_INTERVAL_SEC Supervisor health check (default: 30)
+  ACTIVECORE_SYNC_TZ                      IANA timezone (default: Asia/Tokyo)
+  ACTIVECORE_SYNC_WEEKDAYS_ONLY           1=Mon–Fri only (default: 1)
 
-Cursor IDE 上の Agent が watchdog を監視シェルで起動する。
-watchdog が loop を維持し、AGENT_LOOP_TICK で Agent を起こす。
+Cursor IDE の監視シェルで supervisor を起動する。sessionStart hook と Agent ensure で自動復旧する。
 EOF
 }
 
@@ -52,6 +56,16 @@ emit_tick() {
   local reason="${1:-tick}"
   log_line "TICK reason=$reason"
   printf '%s {"prompt":"%s"}\n' "$SENTINEL" "$PROMPT"
+}
+
+touch_heartbeat() {
+  date +%s >"$HEARTBEAT_FILE"
+}
+
+pid_alive() {
+  local pid_file="$1"
+  [[ -f "$pid_file" ]] || return 1
+  kill -0 "$(cat "$pid_file")" 2>/dev/null
 }
 
 schedule_python() {
@@ -142,16 +156,34 @@ in_window() {
 }
 
 loop_is_running() {
-  [[ -f "$PID_FILE" ]] || return 1
-  kill -0 "$(cat "$PID_FILE")" 2>/dev/null
+  pid_alive "$PID_FILE"
 }
 
 watchdog_is_running() {
-  [[ -f "$WATCHDOG_PID_FILE" ]] || return 1
-  kill -0 "$(cat "$WATCHDOG_PID_FILE")" 2>/dev/null
+  pid_alive "$WATCHDOG_PID_FILE"
+}
+
+supervisor_is_running() {
+  pid_alive "$SUPERVISOR_PID_FILE"
+}
+
+clear_stale_pid() {
+  local pid_file="$1"
+  local label="$2"
+  if [[ ! -f "$pid_file" ]]; then
+    return 0
+  fi
+  local pid
+  pid="$(cat "$pid_file")"
+  if kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+  rm -f "$pid_file"
+  log_line "STALE_PID $label pid=$pid"
 }
 
 start_loop_background() {
+  clear_stale_pid "$PID_FILE" loop
   if loop_is_running; then
     return 0
   fi
@@ -166,7 +198,24 @@ start_loop_background() {
   return 1
 }
 
+start_watchdog_background() {
+  clear_stale_pid "$WATCHDOG_PID_FILE" watchdog
+  if watchdog_is_running; then
+    return 0
+  fi
+  log_line "SUPERVISOR starting watchdog"
+  "$0" watchdog &
+  local i
+  for i in 1 2 3 4 5; do
+    sleep 1
+    watchdog_is_running && return 0
+  done
+  log_line "SUPERVISOR failed to start watchdog"
+  return 1
+}
+
 stop_loop() {
+  clear_stale_pid "$PID_FILE" loop
   if [[ ! -f "$PID_FILE" ]]; then
     return 0
   fi
@@ -180,6 +229,7 @@ stop_loop() {
 }
 
 stop_watchdog() {
+  clear_stale_pid "$WATCHDOG_PID_FILE" watchdog
   if [[ ! -f "$WATCHDOG_PID_FILE" ]]; then
     return 0
   fi
@@ -192,13 +242,39 @@ stop_watchdog() {
   rm -f "$WATCHDOG_PID_FILE"
 }
 
+stop_supervisor() {
+  clear_stale_pid "$SUPERVISOR_PID_FILE" supervisor
+  if [[ ! -f "$SUPERVISOR_PID_FILE" ]]; then
+    return 0
+  fi
+  local pid
+  pid="$(cat "$SUPERVISOR_PID_FILE")"
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid" 2>/dev/null || true
+    log_line "SUPERVISOR_STOP pid=$pid"
+  fi
+  rm -f "$SUPERVISOR_PID_FILE"
+}
+
 cmd_stop() {
   stop_loop
   stop_watchdog
+  stop_supervisor
+  rm -f "$HEARTBEAT_FILE"
   echo "meeting-notes-sync-loop: stopped"
 }
 
 cmd_status() {
+  if [[ -f "$HEARTBEAT_FILE" ]]; then
+    echo "heartbeat age_sec=$(( $(date +%s) - $(cat "$HEARTBEAT_FILE") ))"
+  else
+    echo "heartbeat none"
+  fi
+  if supervisor_is_running; then
+    echo "supervisor running pid=$(cat "$SUPERVISOR_PID_FILE")"
+  else
+    echo "supervisor not running"
+  fi
   if watchdog_is_running; then
     echo "watchdog running pid=$(cat "$WATCHDOG_PID_FILE")"
   else
@@ -215,33 +291,77 @@ cmd_status() {
 }
 
 cmd_ensure() {
+  mkdir -p "$ROOT/tmp"
+  clear_stale_pid "$SUPERVISOR_PID_FILE" supervisor
+  clear_stale_pid "$WATCHDOG_PID_FILE" watchdog
+  clear_stale_pid "$PID_FILE" loop
+
+  if supervisor_is_running; then
+    if ! watchdog_is_running; then
+      start_watchdog_background || true
+    elif ! loop_is_running; then
+      start_loop_background || true
+    fi
+    cmd_status
+    return 0
+  fi
+
   if watchdog_is_running; then
     if ! loop_is_running; then
-      start_loop_background
+      start_loop_background || true
     fi
-    echo "watchdog running pid=$(cat "$WATCHDOG_PID_FILE")"
-    loop_is_running && echo "loop running pid=$(cat "$PID_FILE")"
+    echo "watchdog running without supervisor (pid=$(cat "$WATCHDOG_PID_FILE"))"
+    echo "hint: restart with supervisor for auto-recovery"
     return 0
   fi
-  if loop_is_running; then
-    echo "loop running pid=$(cat "$PID_FILE") (watchdog not running)"
-    return 0
+
+  echo "not running"
+  echo "start: ~/activecore/bin/meeting-notes-sync-loop supervisor  # in Cursor monitored shell"
+  return 1
+}
+
+cmd_supervisor() {
+  mkdir -p "$ROOT/tmp"
+  if supervisor_is_running; then
+    echo "meeting-notes-sync-supervisor: already running (pid=$(cat "$SUPERVISOR_PID_FILE"))"
+    cmd_ensure
+    exit 0
   fi
-  start_loop_background
-  loop_is_running && echo "loop started pid=$(cat "$PID_FILE")"
+
+  echo $$ >"$SUPERVISOR_PID_FILE"
+  trap 'stop_loop; stop_watchdog; rm -f "$SUPERVISOR_PID_FILE"; log_line SUPERVISOR_EXIT pid=$$' EXIT INT TERM
+  log_line "SUPERVISOR_START pid=$$ interval=${SUPERVISOR_INTERVAL}s"
+  touch_heartbeat
+  start_watchdog_background || true
+
+  while true; do
+    sleep "$SUPERVISOR_INTERVAL"
+    touch_heartbeat
+    if ! watchdog_is_running; then
+      log_line "SUPERVISOR watchdog dead; restarting"
+      start_watchdog_background || true
+    elif ! loop_is_running; then
+      log_line "SUPERVISOR loop dead; nudging via watchdog"
+      start_loop_background || true
+    fi
+  done
 }
 
 cmd_watchdog() {
   mkdir -p "$ROOT/tmp"
   if watchdog_is_running; then
     echo "meeting-notes-sync-watchdog: already running (pid=$(cat "$WATCHDOG_PID_FILE"))"
-    cmd_ensure
+    if ! loop_is_running; then
+      start_loop_background || true
+    fi
     exit 0
   fi
+
   echo $$ >"$WATCHDOG_PID_FILE"
-  trap 'stop_loop; rm -f "$WATCHDOG_PID_FILE"; log_line WATCHDOG_STOP pid=$$' EXIT INT TERM
+  trap 'stop_loop; rm -f "$WATCHDOG_PID_FILE"; log_line WATCHDOG_EXIT pid=$$' EXIT INT TERM
   log_line "WATCHDOG_START pid=$$ interval=${WATCHDOG_INTERVAL}s"
   start_loop_background || true
+
   while true; do
     sleep "$WATCHDOG_INTERVAL"
     if ! loop_is_running; then
@@ -281,6 +401,7 @@ cmd_run() {
 main() {
   local cmd="${1:-}"
   case "$cmd" in
+    supervisor) cmd_supervisor ;;
     watchdog) cmd_watchdog ;;
     run) cmd_run ;;
     ensure) cmd_ensure ;;

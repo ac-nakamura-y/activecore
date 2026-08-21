@@ -109,15 +109,22 @@ dedup のため `--source` は次の形式に統一する。
 
 ### 定期実行（平日 10:00–18:30、毎時 :15 / :45）
 
-Google MCP は Cursor IDE の user plugin 経由のみ動作するため、launchd / cron は使わない。Cursor Agent セッション内で次を起動する。
+Google MCP は Cursor IDE の user plugin 経由のみ動作するため、launchd / cron は使わない。Cursor の**監視シェル**で supervisor を起動し、3 層で常時維持する。
 
 ```bash
-~/activecore/bin/meeting-notes-sync-loop watchdog  # 推奨: 自動再起動付き（平日 10:00–18:30、毎時15分・45分）
-~/activecore/bin/meeting-notes-sync-loop stop       # 停止
+~/activecore/bin/meeting-notes-sync-loop supervisor  # 推奨（supervisor → watchdog → loop）
+~/activecore/bin/meeting-notes-sync-loop ensure       # 停止時は Agent が監視シェルで supervisor を起動
+~/activecore/bin/meeting-notes-sync-loop stop         # 停止
 ~/activecore/bin/meeting-notes-sync-loop status
 ```
 
-`watchdog` が loop を監視し、5分ごとに死活確認して停止時は自動再起動する。Agent は `AGENT_LOOP_TICK_meeting_notes_sync` を受けて上記手順を実行する。
+| 層 | 役割 | 間隔 |
+| :-- | :-- | :-- |
+| supervisor | watchdog の死活監視・再起動 | 30 秒 |
+| watchdog | loop の死活監視・再起動 | 5 分 |
+| loop | スケジュールに従い `AGENT_LOOP_TICK` を出力 | :15 / :45 |
+
+`sessionStart` hook（`.cursor/hooks.json`）がセッション開始時に `ensure` を実行する。Agent はタスク着手前に `ensure` を実行し、停止していれば**監視シェル**で `supervisor` を起動する。各ティック処理の最後にも `ensure` する。
 
 ## Notes
 

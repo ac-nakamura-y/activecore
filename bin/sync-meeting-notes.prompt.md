@@ -86,9 +86,19 @@ doc ID が refs.source に既にあるか sqlite3 で確認:
 
 Cursor IDE 上の Agent ループで動かす（launchd / cron 不可 — Google MCP は IDE plugin 必須）。
 
-- ループ: `~/activecore/bin/meeting-notes-sync-loop watchdog`（平日 10:00–18:30、毎時 :15 / :45、5分ごと自動再起動）
+- 起動: `~/activecore/bin/meeting-notes-sync-loop supervisor`（監視シェル、平日 10:00–18:30、毎時 :15 / :45）
 - 停止: `~/activecore/bin/meeting-notes-sync-loop stop`
 - ティック受信時のみこの手順を実行する
+
+## ティック後（必須）
+
+処理完了後、必ず次を実行する:
+
+```bash
+~/activecore/bin/meeting-notes-sync-loop ensure
+```
+
+`not running` の場合は監視シェルで `supervisor` を起動する。
 
 ## 禁止事項
 
