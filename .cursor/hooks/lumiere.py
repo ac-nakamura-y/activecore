@@ -16,7 +16,7 @@ LOG = ROOT / "tmp" / "lumiere.log"
 TZ = ZoneInfo("Asia/Tokyo")
 FOLLOWUP = (
     "AGENT_LOOP_TICK_meeting_notes_sync: "
-    "CLAUDE.md ## Lumiere の Sync 手順を実行。"
+    "CLAUDE.md の Lumiere > 同期 手順を実行。"
 )
 
 

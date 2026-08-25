@@ -2,7 +2,7 @@
 
 会議・チャット・ドキュメントの文脈を Agent に渡すワークスペース。SQLite の `refs` にタイトル・要約・本文・`source`・タグを保持し、正本は `source` 側にある。`save` でキャッシュし、以後は `get` で読む。
 
-## Overview
+## 概要
 
 `refs` は索引兼キャッシュである。`query` で絞り、`get` で本文まで取る。`content` が空なら `source` から取り直して `save` する。タグは `schema.sql` が正本で、未指定時は title から推定する（`tag infer` で確認できる）。`summary` が `(生成中)` なら要約ジョブが動いている。同一 `source` への再 `save` は upsert される。
 
@@ -19,7 +19,7 @@ activecore/
 
 CLI は `activecore --help`。`list` は `query` の alias。タグ操作は `tag add` / `remove` / `set`。
 
-## Workflow
+## 業務プロセス
 
 各ターンは意図、検索、本文、外部補完、整理、回答、保存の `7` 段階を回す。refs を再検索する前に、会話履歴と取得済み本文を使い回す。
 
@@ -60,7 +60,7 @@ Agent はメタデータ登録・本文キャッシュ・タグ付与・要約�
 ~/activecore/bin/activecore query --limit 10
 ```
 
-## References
+## 参照情報
 
 資料を `save` するとき、`--source` は種別ごとに表の形式で書く（dedup のため）。初回 save か更新時だけ fetch し、以降は `get` を使う。本文は一時ファイルに書いてから `save` する。`--require-tag` でタグを推定できない場合はユーザーに確認する。
 
@@ -76,7 +76,7 @@ Agent はメタデータ登録・本文キャッシュ・タグ付与・要約�
 
 終了済みカレンダーイベントの Gemini 議事録を `refs` に登録する。Cursor hook が同期を担い、`/lumiere` で有効化した会話でのみ動く。初期状態は off。状態は `tmp/lumiere.json`、ログは `tmp/lumiere.log` に書く。
 
-### Sync
+### 同期
 
 `AGENT_LOOP_TICK_meeting_notes_sync` を受け取ったら、未登録分だけ save する。
 
@@ -84,11 +84,11 @@ Agent はメタデータ登録・本文キャッシュ・タグ付与・要約�
 | :-- | :-- |
 | 対象 | Calendar `list_events`（`y.nakamura@activecore.jp`、過去 `7` 日、終了 `30` 分以上前） |
 | フィルタ | 添付 `title` が `Gemini によるメモ` の doc ID |
-| 登録 | Drive `read_file_content` → 一時ファイル → `save --require-tag`（source は References の Google Doc 形式） |
+| 登録 | Drive `read_file_content` → 一時ファイル → `save --require-tag`（source は参照情報の Google Doc 形式） |
 
 タグ推定に失敗したら推測せず、ユーザーに確認する。
 
-### Schedule
+### スケジュール
 
 平日 `10:00` から `19:30`、毎時 `:15` と `:45` に同期する。Agent 終了後は次のティックまで followup し、時間外は翌平日 `10:15` まで待つ。ループ上限はない。
 
@@ -100,7 +100,7 @@ flowchart LR
   tick --> agentStop
 ```
 
-### Control
+### 制御
 
 会話単位で on / off を切り替える。コマンドのみ送信した場合は Agent を起動せず、確認メッセージだけ表示する。有効化直後は次の Agent 終了時に即時同期する。
 
