@@ -11,7 +11,8 @@ activecore/
   CLAUDE.md
   schema.sql          # テーブル定義・タグ seed（refs.sqlite とは別物）
   bin/activecore
-  bin/meeting-notes-sync-loop
+  .cursor/hooks.json   # 議事録同期（Lumiere）の stop / beforeSubmitPrompt hook
+  bin/sync-meeting-notes.prompt.md
   db/refs.sqlite      # Git 管理外
   tmp/                # 要約処理（save 時に tmp/{id}.md → summarize → 削除）
 ```
@@ -85,4 +86,4 @@ refs に無い情報は外部ソースで補う。並列に取れるものはま
   --require-tag
 ```
 
-定期実行は Cursor Agent セッション内の `~/activecore/bin/meeting-notes-sync-loop watchdog` に任せる（平日 10:00 から 18:30、毎時 :15 / :45）。`AGENT_LOOP_TICK_meeting_notes_sync` が手順を実行する。
+定期実行は Cursor の `stop` hook が担う（平日 10:00–19:30、毎時 :15 / :45）。**デフォルトは off** で、`/lumiere on` または `/lumiere` で有効化した会話のみ対象。Agent 終了後、次のティック時刻まで待って `AGENT_LOOP_TICK_meeting_notes_sync` で再開する。時間外は次の平日 10:15 まで待って followup する（ループ上限なし）。`/lumiere off` で停止。

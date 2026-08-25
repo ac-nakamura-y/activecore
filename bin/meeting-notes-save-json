@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""Save a meeting note from Drive MCP JSON (fileContent) to activecore."""
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def main() -> int:
+    if len(sys.argv) != 4:
+        print("usage: meeting-notes-save-json <doc_id> <title> <mcp_json_file>", file=sys.stderr)
+        return 2
+
+    doc_id, title, json_path = sys.argv[1], sys.argv[2], Path(sys.argv[3])
+    data = json.loads(json_path.read_text())
+    content = data.get("fileContent") or ""
+    if not content:
+        print(f"FAIL {doc_id} empty")
+        return 1
+    if len(content) < 500:
+        print(f"FAIL {doc_id} short:{len(content)}")
+        return 1
+
+    tmp = Path(f"/tmp/activecore-meeting-{doc_id}.md")
+    tmp.write_text(content)
+    source = f"https://docs.google.com/document/d/{doc_id}/edit"
+    proc = subprocess.run(
+        [
+            str(ROOT / "bin/activecore"),
+            "save",
+            "--title",
+            title,
+            "--source",
+            source,
+            "--content-file",
+            str(tmp),
+            "--require-tag",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode == 0:
+        print(f"OK {doc_id} {title}")
+        return 0
+    print(f"FAIL {doc_id} {(proc.stdout or proc.stderr).strip()[:200]}")
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
