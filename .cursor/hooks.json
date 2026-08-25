@@ -3,13 +3,13 @@
   "hooks": {
     "beforeSubmitPrompt": [
       {
-        "command": ".cursor/hooks/before-submit-meeting-notes-opt-in.py",
+        "command": ".cursor/hooks/lumiere.py before-submit",
         "matcher": "UserPromptSubmit"
       }
     ],
     "stop": [
       {
-        "command": ".cursor/hooks/stop-meeting-notes-schedule.sh",
+        "command": ".cursor/hooks/lumiere.py stop",
         "timeout": 604800,
         "loop_limit": null
       }

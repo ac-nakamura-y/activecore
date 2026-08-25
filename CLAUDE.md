@@ -11,8 +11,7 @@ activecore/
   CLAUDE.md
   schema.sql          # テーブル定義・タグ seed（refs.sqlite とは別物）
   bin/activecore
-  .cursor/hooks.json   # 議事録同期（Lumiere）の stop / beforeSubmitPrompt hook
-  bin/sync-meeting-notes.prompt.md
+  .cursor/hooks.json   # Lumiere（議事録同期）hook
   db/refs.sqlite      # Git 管理外
   tmp/                # 要約処理（save 時に tmp/{id}.md → summarize → 削除）
 ```
