@@ -10,7 +10,7 @@
     "stop": [
       {
         "command": ".cursor/hooks/lumiere.py stop",
-        "timeout": 604800,
+        "timeout": 31536000,
         "loop_limit": null
       }
     ]
