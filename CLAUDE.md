@@ -1,99 +1,81 @@
 # activecore
 
-会議・チャット・ドキュメントなどの文脈を AI エージェントに渡し、日々の作業を速く正確に進めるためのワークスペース。SQLite 上の参照資料インデックス `refs` が中核。各レコードはタイトル・要約・本文キャッシュ・取得元 URL（またはローカルパス）・タグを保持する。本文は `save` 時に DB へキャッシュし、以後は `get` で即読する。正本は `source` 側。要約は保存時にバックグラウンドで Cursor CLI が生成するため、保存 Agent は要約完了を待たない。
+会議・チャット・ドキュメントなどの文脈を AI エージェントに渡すワークスペース。SQLite の `refs` にタイトル・要約・本文キャッシュ・`source`・タグを保持する。`save` で本文をキャッシュし、以後は `get` で読む。正本は `source` 側にある。
 
-## Agent behavior
+## 概要
 
-Agent は次の 2 点を必ず守る。
-
-### Query first
-
-タスク着手前、または判断・実装・回答の前に、関連資料を検索してコンテキストに載せる。
-
-```bash
-~/activecore/bin/activecore query <タスクに関連するキーワード>
-~/activecore/bin/activecore query --tag トリプルエス
-~/activecore/bin/activecore query --limit 10   # 直近の資料
-```
-
-キーワードはクライアント名・プロジェクト名・機能名・課題キーなど、文脈から推定する。ヒットした候補のうち関連度が高いものは `activecore get <id>` で本文を取る。`content` が無い旧レコードだけ `source` から fetch し、再 save する。新しい情報が出たら save して次回以降の検索に備える。
-
-### Save automatically
-
-ユーザーが「保存して」と言わなくても、後の作業で参照しうる資料はすべて保存対象とする。Backlog 課題・Slack スレッド、Google Doc / Slide、Notion ページ、ローカル PDF / HTML、会議メモや仕様・決定事項などが該当する。保存 Agent の役割はメタデータ登録・本文キャッシュ・タグ付与・要約ジョブの起動までで、要約の生成自体は行わない。
-
-タグ enum と推定ルール（`tag_rules`）の正本は `schema.sql`。クライアント・プロジェクト・チームが分かる場合は `--tag` を付ける。新規 save で `--tag` 未指定時は title から推定する（`tag infer "会議タイトル"` で確認可）。
-
-Google Meet の Gemini 議事録は [Meeting notes sync](#meeting-notes-sync) の手順で自動保存する。`--require-tag` 付き save でタグが推定できない会議は、保存前にユーザーにタグを確認する。
-
-## Layout
+`refs` は資料の索引兼ローカルキャッシュである。`query` で候補を絞り、関連がありそうなものは `get` で本文まで読む。`content` が空のレコードは `source` から取り直して `save` する。タグの定義は `schema.sql` が正本で、`--tag` 未指定時は title から推定する（`tag infer` で確認できる）。`summary` が `(生成中)` なら要約ジョブが動いている。同一 `source` への再 `save` は upsert される。
 
 ```
 activecore/
-  CLAUDE.md          # 運用ルール・使い方
-  schema.sql         # DB テーブル定義・タグ seed・推定ルール
-  bin/activecore     # CLI（ディレクトリではなく実行ファイル 1 本）
-  db/refs.sqlite     # 実データ（実行時に自動生成、Git 管理外）
-  tmp/               # 要約処理の一時置き場（tmp/summarize.log にログ）
+  CLAUDE.md
+  schema.sql          # テーブル定義・タグ seed（refs.sqlite とは別物）
+  bin/activecore
+  bin/meeting-notes-sync-loop
+  db/refs.sqlite      # Git 管理外
+  tmp/                # 要約処理（save 時に tmp/{id}.md → summarize → 削除）
 ```
 
-`schema.sql` は DB ファイル `refs.sqlite` とは別物。初回は `init_db` が適用する。seed 更新は `sqlite3 db/refs.sqlite < schema.sql`。要約処理: `save` 時に `--content-file` のコピーを `tmp/{id}.md` に置き、バックグラウンドの `summarize` が Cursor CLI（`agent -p`）に渡す。完了後 `tmp/{id}.md` は削除する。
+CLI は `activecore --help` を参照する。`list` は `query` の alias。タグの変更は `tag add` / `remove` / `set`。
 
-## CLI
+## 業務プロセス
 
-サブコマンド一覧は `activecore --help` を参照。`list` は `query` の alias。`save` 時に `--tag` を付けるとタグは置換される。タグだけ変えるときは `tag add` / `remove` / `set`。
+各ターンは意図、検索、本文、外部補完、整理、回答、保存の 7 段階を回す。refs を再検索する前に、会話履歴と取得済み本文を使い回す。
 
-## Save workflow
+```mermaid
+flowchart LR
+  step1[意図] --> step2[検索]
+  step2 --> step3[本文]
+  step3 --> step4[外部]
+  step4 --> step5[整理]
+  step5 --> step6[回答]
+  step6 --> step7[保存]
+  step7 --> step1
+```
 
-保存は source の正規化、本文取得、CLI 実行の 3 段階で行う。
+Agent はメタデータ登録・本文キャッシュ・タグ付与・要約ジョブの起動まで行い、要約の生成そのものは行わない。判断と操作は次の原則に従う。
 
-### Source format
-
-dedup のため `--source` は次の形式に統一する。
-
-| 種別 | source 形式 |
+| 項目 | 内容 |
 | :-- | :-- |
-| Backlog | `https://{space}.backlog.com/view/{ISSUE_KEY}` |
-| Slack | permalink URL |
-| Google Doc / Slide | `https://docs.google.com/.../d/{id}/edit`（`save` 時に正規化） |
-| Notion | `https://www.notion.so/{pageId}` |
-| ローカルファイル | 絶対パス（`save` 時に正規化） |
+| 先に検索 | 回答・判断・実装の前に refs を検索する |
+| 自動保存 | 参照しうる資料と会話で得た新情報は、頼まれなくても `save` する |
+| 文脈の再利用 | 同一会話内の取得済み本文を使い回し、不要な再 fetch を避ける |
+| 不確実性の分離 | 合意・進行中・未確認を混同しない |
+| 根拠の明示 | 議事録・課題・予定など、出典を示す |
+| 推測の禁止 | refs・Calendar・Backlog を見ずに断定しない |
 
-### Content fetch
+意図の段階では、フォローアップか新規トピックかを見極める。検索ではクライアント名・プロジェクト名・機能名・課題キー・人名など、文脈から複数パターンを試す。ヒットしなければキーワードを分割して繰り返す。本文は `get <id>` で取る。要約だけでは、論点の有無や決定事項の突合はできない。
 
-| 種別 | 取得方法 |
-| :-- | :-- |
-| Backlog 課題 | `get_issue` , `get_issue_comments` |
-| Slack | `slack_read_thread` / `slack_read_channel` |
-| Google Doc / Slide | `read_file_content` |
-| Notion | Notion MCP |
-| ローカル PDF / HTML | ファイル read |
+```bash
+~/activecore/bin/activecore query <キーワード>
+~/activecore/bin/activecore query --tag トリプルエス
+~/activecore/bin/activecore query --limit 10
+```
 
-初回 save または鮮度更新のときだけ fetch する。以降の参照は `get`。本文を一時ファイルに書き `save` を実行する。戻り値は uuid（`id`）。要約はバックグラウンドで自動起動される。保存 Agent の作業はここで終了する。
+refs に無い情報は外部ソースで補う。並列に取れるものはまとめて実行する。
 
-## Meeting notes sync
+| 種別 | ソース | 操作 |
+| :-- | :-- | :-- |
+| 予定・次回MTG | Google Calendar | `search_events` / `list_events` |
+| 課題・コメント | Backlog | `get_issues` / `get_issue_comments` |
+| タスク・期限 | Linear | `list_issues` |
+| リアルタイム文書 | Google Drive MCP | `read_file_content` |
 
-終了済みカレンダーイベントに添付された Gemini 議事録を、Google Calendar MCP + Google Drive MCP 経由で SQLite に登録する。
+複数ソースを突合して答える。事実と推測は分け、出典のない断定はしない。
 
-### 手順
+## 参照情報
 
-1. Google Calendar MCP `list_events`
-   - `calendarId`: `y.nakamura@activecore.jp`（primary でも可）
-   - `startTime`: 過去 7 日（初回・取りこぼしは 365 日）
-   - `endTime`: 現在時刻 − 30 分（終了済みのみ）
-   - `orderBy`: `startTime`
+資料を `save` するとき、`--source` の形式は種別ごとに揃える。dedup のため、表のとおり書く。初回 save か内容の更新時だけ fetch し、以降は `get` を使う。本文は一時ファイルに書いてから `save` する。`--require-tag` でタグを推定できない場合はユーザーに確認する。
 
-2. 各イベントの `attachments` を確認
-   - `title` が `Gemini によるメモ` の `fileUrl` から doc ID を抽出
-   - Meet 録画のみで Gemini 添付が無いイベントはスキップ
+| 種別 | ソース | 操作 |
+| :-- | :-- | :-- |
+| Backlog | `https://{space}.backlog.com/view/{ISSUE_KEY}` | `get_issue` / `get_issue_comments` |
+| Slack | permalink URL | `slack_read_thread` / `slack_read_channel` |
+| Google Doc / Slide | `https://docs.google.com/.../d/{id}/edit` | `read_file_content` |
+| Notion | `https://www.notion.so/{pageId}` | Notion MCP |
+| ローカルファイル | 絶対パス | ファイル read |
 
-3. 未登録のみ処理
-   - `source`: `https://docs.google.com/document/d/{docId}/edit`
-   - 同一 doc ID が `refs.source` にあればスキップ（`LIKE '%/document/d/{docId}/%'`）
-
-4. Google Drive MCP `read_file_content` で本文取得 → 一時ファイルへ書き出し
-
-5. `activecore save --require-tag`（タイトルはイベント `summary`。title からタグ推定）
+終了済みカレンダーイベントに付く Gemini 議事録（添付 `title`: `Gemini によるメモ`）は、Calendar と Drive MCP 経由で自動登録する。`list_events`（`calendarId`: `y.nakamura@activecore.jp`、過去 7 日、終了 30 分以上前）で対象を洗い出し、未登録の doc ID だけ `read_file_content` して `save --require-tag` する。
 
 ```bash
 ~/activecore/bin/activecore save \
@@ -103,10 +85,4 @@ dedup のため `--source` は次の形式に統一する。
   --require-tag
 ```
 
-`--require-tag` でタグ推定に失敗した場合、Agent はユーザーにタグを確認してから `--tag` を付けて save する。推測でタグを付けない。
-
-定期実行が必要なら Cursor Automation（cron トリガー + 上記 MCP）を使う。
-
-## Notes
-
-`summary` が `(生成中)` の場合、要約ジョブ実行中。同じ `source` を再 save すると upsert され、本文・要約が更新される。
+定期実行は Cursor Agent セッション内の `~/activecore/bin/meeting-notes-sync-loop watchdog` に任せる（平日 10:00 から 18:30、毎時 :15 / :45）。`AGENT_LOOP_TICK_meeting_notes_sync` が手順を実行する。
