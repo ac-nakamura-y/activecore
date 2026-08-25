@@ -9,11 +9,13 @@
 ```
 activecore/
   CLAUDE.md
-  schema.sql          # テーブル定義・タグ seed（refs.sqlite とは別物）
+  schema.sql              # テーブル定義・タグ seed（refs.sqlite とは別物）
   bin/activecore
-  .cursor/hooks.json   # Lumiere（議事録同期）hook
-  db/refs.sqlite      # Git 管理外
-  tmp/                # 要約処理（save 時に tmp/{id}.md → summarize → 削除）
+  .cursor/hooks.json      # Lumiere hook 定義
+  .cursor/hooks/lumiere.py
+  db/refs.sqlite          # Git 管理外
+  tmp/lumiere.json        # 有効化会話（Git 管理外）
+  tmp/                    # 要約処理（save 時に tmp/{id}.md → summarize → 削除）
 ```
 
 CLI は `activecore --help` を参照する。`list` は `query` の alias。タグの変更は `tag add` / `remove` / `set`。
@@ -75,7 +77,19 @@ refs に無い情報は外部ソースで補う。並列に取れるものはま
 | Notion | `https://www.notion.so/{pageId}` | Notion MCP |
 | ローカルファイル | 絶対パス | ファイル read |
 
-終了済みカレンダーイベントに付く Gemini 議事録（添付 `title`: `Gemini によるメモ`）は、Calendar と Drive MCP 経由で自動登録する。`list_events`（`calendarId`: `y.nakamura@activecore.jp`、過去 7 日、終了 30 分以上前）で対象を洗い出し、未登録の doc ID だけ `read_file_content` して `save --require-tag` する。
+## Lumiere
+
+Lumiere は終了済みカレンダーイベントに付く Gemini 議事録を `refs` に自動登録する。同期は Cursor hook が担い、有効化した会話でのみ動く。初期状態は off である。
+
+### Sync
+
+`AGENT_LOOP_TICK_meeting_notes_sync` を受け取ったら、次の手順で未登録分だけ save する。
+
+| 段階 | 操作 |
+| :-- | :-- |
+| 対象抽出 | Calendar `list_events`（`calendarId`: `y.nakamura@activecore.jp`、過去 `7` 日、終了 `30` 分以上前） |
+| フィルタ | 添付 `title` が `Gemini によるメモ` の doc ID |
+| 登録 | `refs.source` 未登録分を Drive `read_file_content` して `save --require-tag` |
 
 ```bash
 ~/activecore/bin/activecore save \
@@ -85,4 +99,27 @@ refs に無い情報は外部ソースで補う。並列に取れるものはま
   --require-tag
 ```
 
-定期実行は Cursor の `stop` hook が担う（平日 10:00–19:30、毎時 :15 / :45）。**デフォルトは off** で、`/lumiere on` または `/lumiere` で有効化した会話のみ対象。Agent 終了後、次のティック時刻まで待って `AGENT_LOOP_TICK_meeting_notes_sync` で再開する。時間外は次の平日 10:15 まで待って followup する（ループ上限なし）。`/lumiere off` で停止。
+タグ推定に失敗した場合は推測で付けず、ユーザーに確認する。ログは `tmp/lumiere.log` に記録する。
+
+### Schedule
+
+平日 `10:00`–`19:30`、毎時 `:15` / `:45` に同期する。Agent 終了後は次のティックまで待って followup する。時間外は次の平日 `10:15` まで待機する。ループ上限はない。
+
+```mermaid
+flowchart LR
+  agentStop[Agent終了] --> stopHook[stop hook]
+  stopHook --> sleep[待機]
+  sleep --> tick[同期]
+  tick --> agentStop
+```
+
+### Control
+
+会話単位で on / off を切り替える。コマンドのみ送信した場合は Agent を起動せず、確認メッセージだけ表示する。
+
+| 操作 | コマンド |
+| :-- | :-- |
+| 有効化 | `/lumiere` または `/lumiere on` |
+| 無効化 | `/lumiere off` |
+
+有効化直後は待機を省略し、次の Agent 終了時に即時同期する。

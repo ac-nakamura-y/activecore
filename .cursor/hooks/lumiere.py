@@ -4,8 +4,6 @@
 from __future__ import annotations
 
 import json
-import os
-import re
 import sys
 import time
 from datetime import datetime, timedelta, time as dt_time
@@ -13,191 +11,131 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[2]
-STATE_FILE = ROOT / "tmp" / "lumiere.json"
-LOG_FILE = ROOT / "tmp" / "lumiere.log"
-
-WINDOW_START = os.environ.get("LUMIERE_WINDOW_START", "10:00")
-WINDOW_END = os.environ.get("LUMIERE_WINDOW_END", "19:30")
-SCHEDULE_MINUTES = os.environ.get("LUMIERE_SCHEDULE_MINUTES", "15,45")
-TZ_NAME = os.environ.get("LUMIERE_TZ", "Asia/Tokyo")
-WEEKDAYS_ONLY = os.environ.get("LUMIERE_WEEKDAYS_ONLY", "1") == "1"
-
-LUMIERE_OFF = re.compile(r"^/lumiere\s+off\s*$", re.IGNORECASE)
-LUMIERE_ON = re.compile(r"^/lumiere(?:\s+on)?\s*$", re.IGNORECASE)
-
-FOLLOWUP_PROMPT = (
+STATE = ROOT / "tmp" / "lumiere.json"
+LOG = ROOT / "tmp" / "lumiere.log"
+TZ = ZoneInfo("Asia/Tokyo")
+FOLLOWUP = (
     "AGENT_LOOP_TICK_meeting_notes_sync: "
     "CLAUDE.md の Gemini 議事録登録手順を実行。"
 )
 
 
 def log(message: str) -> None:
-    LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now().astimezone().isoformat(timespec="seconds")
-    with LOG_FILE.open("a", encoding="utf-8") as fh:
-        fh.write(f"{stamp} {message}\n")
+    LOG.parent.mkdir(parents=True, exist_ok=True)
+    with LOG.open("a", encoding="utf-8") as fh:
+        fh.write(f"{datetime.now(TZ).isoformat(timespec='seconds')} {message}\n")
 
 
-def empty_state() -> dict:
-    return {"enabled": [], "wake": None}
-
-
-def load_state() -> dict:
-    if not STATE_FILE.exists():
-        return empty_state()
+def read_payload() -> dict:
     try:
-        data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return empty_state()
-    if not isinstance(data, dict):
-        return empty_state()
-    enabled = data.get("enabled")
-    if not isinstance(enabled, list):
-        enabled = []
-    wake = data.get("wake")
-    if wake is not None and not isinstance(wake, str):
-        wake = None
-    return {"enabled": enabled, "wake": wake}
+        return json.load(sys.stdin)
+    except json.JSONDecodeError:
+        return {}
 
 
-def save_state(state: dict) -> None:
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(
-        json.dumps(state, ensure_ascii=False, indent=2) + "\n",
+def read_state() -> tuple[list[str], str | None]:
+    try:
+        data = json.loads(STATE.read_text(encoding="utf-8"))
+        enabled = data.get("enabled", [])
+        wake = data.get("wake")
+        if not isinstance(enabled, list):
+            enabled = []
+        if wake is not None and not isinstance(wake, str):
+            wake = None
+        return enabled, wake
+    except (OSError, json.JSONDecodeError):
+        return [], None
+
+
+def write_state(enabled: list[str], wake: str | None) -> None:
+    STATE.parent.mkdir(parents=True, exist_ok=True)
+    STATE.write_text(
+        json.dumps({"enabled": enabled, "wake": wake}, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
 
 
-def is_enabled(conversation_id: str) -> bool:
-    return bool(conversation_id) and conversation_id in load_state()["enabled"]
-
-
-def set_enabled(conversation_id: str, enabled: bool) -> None:
-    state = load_state()
-    enabled_ids = state["enabled"]
-    if enabled:
-        if conversation_id not in enabled_ids:
-            enabled_ids.append(conversation_id)
-        state["wake"] = conversation_id
-        log(f"ENABLED {conversation_id}")
-    else:
-        if conversation_id in enabled_ids:
-            enabled_ids.remove(conversation_id)
-        if state["wake"] == conversation_id:
-            state["wake"] = None
-        log(f"DISABLED {conversation_id}")
-    save_state(state)
-
-
-def detect_action(prompt: str) -> str | None:
-    stripped = prompt.strip()
-    if LUMIERE_OFF.match(stripped):
-        return "disable"
-    if LUMIERE_ON.match(stripped):
-        return "enable"
+def parse_command(prompt: str) -> bool | None:
+    text = prompt.strip().lower()
+    if text == "/lumiere off":
+        return False
+    if text in ("/lumiere", "/lumiere on"):
+        return True
     return None
 
 
-def parse_clock(value: str) -> dt_time:
-    hour, minute = (int(part) for part in value.split(":", 1))
-    return dt_time(hour, minute)
-
-
 def next_tick(after: datetime) -> datetime:
-    tz = after.tzinfo or ZoneInfo(TZ_NAME)
-    start_t = parse_clock(WINDOW_START)
-    end_t = parse_clock(WINDOW_END)
-    tick_minutes = [int(part) for part in SCHEDULE_MINUTES.split(",") if part.strip()]
-
-    def active_day(day) -> bool:
-        return day.weekday() < 5 if WEEKDAYS_ONLY else True
-
-    def ticks_for_day(day):
-        if not active_day(day):
-            return []
-        start = datetime.combine(day, start_t, tzinfo=tz)
-        end = datetime.combine(day, end_t, tzinfo=tz)
-        out = []
-        for hour in range(24):
-            for minute in tick_minutes:
-                tick = datetime.combine(day, dt_time(hour, minute), tzinfo=tz)
-                if start <= tick < end:
-                    out.append(tick)
-        return sorted(out)
-
-    day = after.date()
-    for _ in range(370):
-        for tick in ticks_for_day(day):
-            if tick > after:
-                return tick
-        day += timedelta(days=1)
+    cursor = after
+    for _ in range(400):
+        day = cursor.date()
+        if day.weekday() < 5:
+            for hour in range(10, 20):
+                for minute in (15, 45):
+                    tick = datetime.combine(day, dt_time(hour, minute), tzinfo=TZ)
+                    if dt_time(10, 0) <= tick.time() < dt_time(19, 30) and tick > after:
+                        return tick
+        cursor = datetime.combine(day + timedelta(days=1), dt_time(0, 0), tzinfo=TZ)
     raise RuntimeError("no tick found")
 
 
-def emit_followup() -> None:
-    print(json.dumps({"followup_message": FOLLOWUP_PROMPT}, ensure_ascii=False))
+def followup() -> None:
+    print(json.dumps({"followup_message": FOLLOWUP}, ensure_ascii=False))
 
 
 def before_submit() -> int:
-    try:
-        payload = json.load(sys.stdin)
-    except json.JSONDecodeError:
+    payload = read_payload()
+    command = parse_command(payload.get("prompt", ""))
+    conversation_id = payload.get("conversation_id", "")
+    if command is None or not conversation_id:
         print(json.dumps({"continue": True}))
         return 0
 
-    prompt = payload.get("prompt") or ""
-    conversation_id = payload.get("conversation_id") or ""
-    action = detect_action(prompt)
-    if not action or not conversation_id:
-        print(json.dumps({"continue": True}))
-        return 0
+    enabled, wake = read_state()
+    if command:
+        if conversation_id not in enabled:
+            enabled.append(conversation_id)
+        write_state(enabled, conversation_id)
+        log(f"ENABLED {conversation_id}")
+        message = "Lumiere を有効化しました。"
+    else:
+        enabled = [item for item in enabled if item != conversation_id]
+        write_state(enabled, None if wake == conversation_id else wake)
+        log(f"DISABLED {conversation_id}")
+        message = "Lumiere を無効化しました。"
 
-    set_enabled(conversation_id, action == "enable")
-    message = (
-        "Lumiere を有効化しました。"
-        if action == "enable"
-        else "Lumiere を無効化しました。"
-    )
     print(json.dumps({"continue": False, "user_message": message}, ensure_ascii=False))
     return 0
 
 
 def stop() -> int:
-    try:
-        payload = json.load(sys.stdin)
-    except json.JSONDecodeError:
-        payload = {}
-
-    conversation_id = payload.get("conversation_id") or ""
-    if not is_enabled(conversation_id):
+    conversation_id = read_payload().get("conversation_id", "")
+    enabled, wake = read_state()
+    if conversation_id not in enabled:
         log(f"SKIP {conversation_id or '<missing>'}")
         return 0
 
-    state = load_state()
-    if state.get("wake") == conversation_id:
-        state["wake"] = None
-        save_state(state)
+    if wake == conversation_id:
+        write_state(enabled, None)
         log(f"FOLLOWUP immediate {conversation_id}")
-        emit_followup()
+        followup()
         return 0
 
-    now = datetime.now(ZoneInfo(TZ_NAME))
+    now = datetime.now(TZ)
     target = next_tick(now)
-    sleep_sec = max(1, int((target - now).total_seconds()))
-    log(f"SLEEP sec={sleep_sec} next={target.isoformat()} conv={conversation_id}")
-    time.sleep(sleep_sec)
+    seconds = max(1, int((target - now).total_seconds()))
+    log(f"SLEEP sec={seconds} next={target.isoformat()}")
+    time.sleep(seconds)
     log(f"WAKE {conversation_id}")
-    emit_followup()
+    followup()
     return 0
 
 
 def main() -> int:
-    if len(sys.argv) != 2 or sys.argv[1] not in {"before-submit", "stop"}:
+    commands = {"before-submit": before_submit, "stop": stop}
+    if len(sys.argv) != 2 or sys.argv[1] not in commands:
         print("usage: lumiere.py <before-submit|stop>", file=sys.stderr)
         return 2
-    if sys.argv[1] == "before-submit":
-        return before_submit()
-    return stop()
+    return commands[sys.argv[1]]()
 
 
 if __name__ == "__main__":
