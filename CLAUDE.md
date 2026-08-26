@@ -73,11 +73,11 @@ Agent はメタデータ登録・本文キャッシュ・タグ付与・要約�
 
 ## Lumiere
 
-終了済みカレンダーイベントの Gemini 議事録を `refs` に登録する。同期手順は Agent が実行する。定期実行は背景シェルが `AGENT_LOOP_TICK_meeting_notes_sync` を出力し、Agent が tick ごとに同期する。起動・停止は `.claude/commands/lumiere.md` の `/lumiere on` / `/lumiere off`。
+終了済みカレンダーイベントに添付された Gemini 議事録を `refs` に登録する。Agent が同期手順を実行し、定期実行は背景シェルが `AGENT_LOOP_TICK_meeting_notes_sync` を出して tick ごとに走る。有効化と停止は `/lumiere`（`.claude/commands/lumiere.md`）で行う。
 
 ### 同期
 
-`AGENT_LOOP_TICK_meeting_notes_sync` を受け取ったら、未登録分だけ save する。
+tick を受け取ったら、未登録分だけ save する。
 
 | 段階 | 操作 |
 | :-- | :-- |
@@ -87,26 +87,15 @@ Agent はメタデータ登録・本文キャッシュ・タグ付与・要約�
 
 タグ推定に失敗したら推測せず、ユーザーに確認する。
 
-### スケジュール
+### 運用
 
-`/lumiere on`（引数省略時も on）で Agent は `.claude/commands/lumiere.md` に従い背景シェルループを起動し、初回同期後は tick ごとに同期する。
-
-1. 背景シェルが `sleep`（既定 5 分）のあと `AGENT_LOOP_TICK_meeting_notes_sync` を出力
-2. Agent が tick を受け取り同期手順を実行
-
-間隔はループ内の `LUMIERE_SLEEP_SECONDS`（未設定時 `300`）で変更する。
+`/lumiere` または `/lumiere on` で背景ループを起動し、直後に同期を 1 回実行する。その後は `sleep`（既定 5 分、`LUMIERE_SLEEP_SECONDS` で変更可）ごとに tick が出て、同期手順が繰り返される。`/lumiere off` でループを停止する。
 
 ```mermaid
 flowchart LR
-  enable["/lumiere"] --> loop["背景シェルループ"]
-  loop --> tick["AGENT_LOOP_TICK"]
-  tick --> sync[同期]
+  enable["/lumiere"] --> loop["背景シェル"]
+  loop --> tick["tick通知"]
+  tick --> sync["同期"]
   sync --> loop
+  disable["/lumiere off"] --> stop["停止"]
 ```
-
-### 制御
-
-| 操作 | コマンド |
-| :-- | :-- |
-| 有効化 | `/lumiere` または `/lumiere on` |
-| 無効化 | `/lumiere off` |
