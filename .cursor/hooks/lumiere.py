@@ -57,9 +57,9 @@ def write_state(enabled: list[str], wake: str | None) -> None:
 
 def parse_command(prompt: str) -> bool | None:
     text = prompt.strip().lower()
-    if text == "/lumiere off":
+    if text in ("/lumiere off", "/lumiere-off"):
         return False
-    if text in ("/lumiere", "/lumiere on"):
+    if text in ("/lumiere", "/lumiere on", "/lumiere-on"):
         return True
     return None
 
