@@ -19,10 +19,10 @@ argument-hint: on | off
 
 同期とスケジュールは `CLAUDE.md` の Cogsworth。ループ起動後に同期を 1 回実行し、以降は tick ごとに同期する。
 
-同じ tick を出すループがなければ、バックグランドシェルで `script/loop.sh` を起動する。
+同じ tick を出すループがなければ、バックグランドシェルで `script/loop.py` を起動する。
 
 ```bash
-~/activecore/.claude/commands/script/loop.sh
+~/activecore/.claude/commands/script/loop.py
 ```
 
 | 項目 | 値 |
