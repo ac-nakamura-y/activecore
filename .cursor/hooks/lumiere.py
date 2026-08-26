@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lumiere: per-conversation Gemini meeting notes sync."""
+"""Lumiere: enabled conversations sleep until the next tick, then notify the agent."""
 
 from __future__ import annotations
 
@@ -38,39 +38,29 @@ def read_payload() -> dict:
         return {}
 
 
-def read_state() -> tuple[list[str], str | None]:
+def read_enabled() -> list[str]:
     try:
         data = json.loads(STATE.read_text(encoding="utf-8"))
         enabled = data.get("enabled", [])
-        wake = data.get("wake")
-        if not isinstance(enabled, list):
-            enabled = []
-        if wake is not None and not isinstance(wake, str):
-            wake = None
-        return enabled, wake
+        return enabled if isinstance(enabled, list) else []
     except (OSError, json.JSONDecodeError):
-        return [], None
+        return []
 
 
-def write_state(enabled: list[str], wake: str | None) -> None:
+def write_enabled(enabled: list[str]) -> None:
     STATE.parent.mkdir(parents=True, exist_ok=True)
     STATE.write_text(
-        json.dumps({"enabled": enabled, "wake": wake}, ensure_ascii=False, indent=2) + "\n",
+        json.dumps({"enabled": enabled}, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
 
 
-def strip_frontmatter(text: str) -> str:
-    if not text.startswith("---"):
-        return text
-    parts = text.split("---", 2)
-    if len(parts) < 3:
-        return text
-    return parts[2].strip()
-
-
 def parse_command(prompt: str) -> bool | None:
-    text = strip_frontmatter(prompt.strip())
+    text = prompt.strip()
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) >= 3:
+            text = parts[2].strip()
     for line in text.splitlines():
         candidate = line.strip()
         if not candidate or candidate.startswith("---"):
@@ -83,25 +73,6 @@ def parse_command(prompt: str) -> bool | None:
         return False
     if LUMIERE_ON.match(text):
         return True
-    return None
-
-
-def detect_command(payload: dict) -> bool | None:
-    action = parse_command(payload.get("prompt", ""))
-    if action is not None:
-        return action
-    for attachment in payload.get("attachments") or []:
-        if attachment.get("type") != "file":
-            continue
-        path = Path(attachment.get("file_path", ""))
-        if "lumiere" not in path.name.lower():
-            continue
-        try:
-            action = parse_command(path.read_text(encoding="utf-8"))
-        except OSError:
-            continue
-        if action is not None:
-            return action
     return None
 
 
@@ -123,20 +94,16 @@ def next_tick(after: datetime) -> datetime:
     raise RuntimeError("no tick found")
 
 
-def followup() -> None:
-    print(json.dumps({"followup_message": FOLLOWUP}, ensure_ascii=False))
-
-
 def set_enabled(conversation_id: str, enabled: bool) -> str:
-    enabled_ids, wake = read_state()
+    ids = read_enabled()
     if enabled:
-        if conversation_id not in enabled_ids:
-            enabled_ids.append(conversation_id)
-        write_state(enabled_ids, conversation_id)
+        if conversation_id not in ids:
+            ids.append(conversation_id)
+        write_enabled(ids)
         log(f"ENABLED {conversation_id}")
-        return "Lumiere を有効化しました。次の Agent 終了後に同期を開始します。"
-    enabled_ids = [item for item in enabled_ids if item != conversation_id]
-    write_state(enabled_ids, None if wake == conversation_id else wake)
+        return "Lumiere を有効化しました。"
+    ids = [item for item in ids if item != conversation_id]
+    write_enabled(ids)
     log(f"DISABLED {conversation_id}")
     return "Lumiere を無効化しました。"
 
@@ -144,20 +111,31 @@ def set_enabled(conversation_id: str, enabled: bool) -> str:
 def before_submit() -> int:
     payload = read_payload()
     conversation_id = payload.get("conversation_id", "")
-    command = detect_command(payload)
+    command = parse_command(payload.get("prompt", ""))
 
-    if command is None:
-        if "lumiere" in payload.get("prompt", "").lower():
-            log(f"UNMATCHED prompt={payload.get('prompt', '')[:200]!r}")
+    if command is None or not conversation_id:
         print(json.dumps({"continue": True}))
         return 0
 
-    if not conversation_id:
-        log("BEFORE_SUBMIT missing conversation_id")
-        print(json.dumps({"continue": True}))
+    if command:
+        set_enabled(conversation_id, True)
+        print(
+            json.dumps(
+                {
+                    "continue": True,
+                    "user_message": "Lumiere を有効化しました。",
+                    "agent_message": (
+                        "Lumiere が有効化されました。"
+                        "『有効化しました』とだけ返答して終了してください。"
+                        "ツールは使わず、同期もまだ行わないでください。"
+                    ),
+                },
+                ensure_ascii=False,
+            )
+        )
         return 0
 
-    message = set_enabled(conversation_id, command)
+    message = set_enabled(conversation_id, False)
     print(json.dumps({"continue": False, "user_message": message}, ensure_ascii=False))
     return 0
 
@@ -165,16 +143,10 @@ def before_submit() -> int:
 def stop() -> int:
     payload = read_payload()
     conversation_id = payload.get("conversation_id", "")
-    enabled, wake = read_state()
-    log(f"STOP conv={conversation_id or '<missing>'} enabled={conversation_id in enabled} wake={wake}")
+    enabled = read_enabled()
+    log(f"STOP conv={conversation_id or '<missing>'} enabled={conversation_id in enabled}")
 
     if conversation_id not in enabled:
-        return 0
-
-    if wake == conversation_id:
-        write_state(enabled, None)
-        log(f"FOLLOWUP immediate {conversation_id}")
-        followup()
         return 0
 
     now = datetime.now(TZ)
@@ -184,8 +156,8 @@ def stop() -> int:
     mode = f"test={test_minutes}m" if test_minutes > 0 else "prod"
     log(f"SLEEP sec={seconds} next={target.isoformat()} mode={mode}")
     time.sleep(seconds)
-    log(f"WAKE {conversation_id}")
-    followup()
+    log(f"FOLLOWUP {conversation_id}")
+    print(json.dumps({"followup_message": FOLLOWUP}, ensure_ascii=False))
     return 0
 
 

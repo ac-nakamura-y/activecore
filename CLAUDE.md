@@ -75,7 +75,7 @@ Agent はメタデータ登録・本文キャッシュ・タグ付与・要約�
 
 ## Lumiere
 
-終了済みカレンダーイベントの Gemini 議事録を `refs` に登録する。Cursor hook が同期を担い、`/lumiere` で有効化した会話でのみ動く。初期状態は off。状態は `tmp/lumiere.json`、ログは `tmp/lumiere.log` に書く。
+終了済みカレンダーイベントの Gemini 議事録を `refs` に登録する。同期手順は Agent が実行し、`stop` hook は有効化した会話で次のティックまで待ってから Agent を起こすだけ。初期状態は off。状態は `tmp/lumiere.json`、ログは `tmp/lumiere.log`。
 
 ### 同期
 
@@ -91,7 +91,7 @@ Agent はメタデータ登録・本文キャッシュ・タグ付与・要約�
 
 ### スケジュール
 
-平日 `10:00` から `19:30`、毎時 `:15` と `:45` に同期する。Agent 終了後は次のティックまで followup し、時間外は翌平日 `10:15` まで待つ。ループ上限はない。
+平日 `10:00` から `19:30`、毎時 `:15` と `:45` に同期する。Agent 終了後、`stop` hook が次のティックまでスリープし `followup_message` で Agent を起こす。時間外は翌平日 `10:15` まで待つ。ループ上限はない。検証時は `LUMIERE_TEST_INTERVAL_MINUTES=5` で 5 分間隔にできる。
 
 ```mermaid
 flowchart LR
@@ -103,7 +103,7 @@ flowchart LR
 
 ### 制御
 
-会話単位で on / off を切り替える。`/lumiere`（デフォルト on）、`/lumiere on`、`/lumiere off` のいずれかを送る。いずれも Agent は起動せず、確認メッセージだけ表示する。有効化直後は次の Agent 終了時に即時同期する。
+会話単位で on / off を切り替える。`/lumiere`（デフォルト on）、`/lumiere on`、`/lumiere off` を送る。有効化時は Agent が短く応答して終了し、その直後から `stop` hook の待機ループが始まる。無効化時は Agent を起動せず確認メッセージだけ表示する。
 
 | 操作 | コマンド |
 | :-- | :-- |
