@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import time
@@ -105,6 +106,10 @@ def detect_command(payload: dict) -> bool | None:
 
 
 def next_tick(after: datetime) -> datetime:
+    test_minutes = int(os.environ.get("LUMIERE_TEST_INTERVAL_MINUTES", "0"))
+    if test_minutes > 0:
+        return after + timedelta(minutes=test_minutes)
+
     cursor = after
     for _ in range(400):
         day = cursor.date()
@@ -175,7 +180,9 @@ def stop() -> int:
     now = datetime.now(TZ)
     target = next_tick(now)
     seconds = max(1, int((target - now).total_seconds()))
-    log(f"SLEEP sec={seconds} next={target.isoformat()}")
+    test_minutes = int(os.environ.get("LUMIERE_TEST_INTERVAL_MINUTES", "0"))
+    mode = f"test={test_minutes}m" if test_minutes > 0 else "prod"
+    log(f"SLEEP sec={seconds} next={target.isoformat()} mode={mode}")
     time.sleep(seconds)
     log(f"WAKE {conversation_id}")
     followup()

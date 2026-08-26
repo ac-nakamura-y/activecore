@@ -8,7 +8,7 @@
     ],
     "stop": [
       {
-        "command": "python3 .cursor/hooks/lumiere.py stop",
+        "command": "env LUMIERE_TEST_INTERVAL_MINUTES=5 python3 .cursor/hooks/lumiere.py stop",
         "timeout": 2592000,
         "loop_limit": null
       }
