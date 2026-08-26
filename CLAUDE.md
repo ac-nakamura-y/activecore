@@ -74,7 +74,7 @@ Agent はメタデータ登録・本文キャッシュ・タグ付与・要約�
 
 ## Cogsworth
 
-終了済みカレンダーイベントに添付された Gemini 議事録を `refs` に登録する。Agent が同期手順を実行し、定期実行は背景シェルが `AGENT_LOOP_TICK_cogsworth` を出して tick ごとに走る。有効化と停止は `/cogsworth`（`.claude/commands/cogsworth.md`）で行う。
+終了済みカレンダーイベントに添付された Gemini 議事録を `refs` に登録する。Agent が同期手順を実行し、定期実行はバックグランドシェルが `AGENT_LOOP_TICK_cog` を出して tick ごとに走る。有効化と停止は `/cogsworth`（`.claude/commands/cogsworth.md`）で行う。
 
 ### 同期
 
@@ -90,11 +90,11 @@ tick を受け取ったら、未登録分だけ save する。
 
 ### 運用
 
-`/cogsworth` または `/cogsworth on` で背景ループを起動し、直後に同期を 1 回実行する。その後は平日 `10:00`〜`19:30` の各時 `15` 分・`45` 分（`Asia/Tokyo`）に tick が出て、同期手順が繰り返される。`/cogsworth off` でループを停止する。
+`/cogsworth` または `/cogsworth on` でバックグランドループを起動し、直後に同期を 1 回実行する。その後は平日 `10:00`〜`19:30` の各時 `15` 分・`45` 分（`Asia/Tokyo`）に tick が出て、同期手順が繰り返される。`/cogsworth off` でループを停止する。
 
 ```mermaid
 flowchart LR
-  enable["/cogsworth"] --> loop["背景シェル"]
+  enable["/cogsworth"] --> loop["バックグランドシェル"]
   loop --> tick["tick"]
   tick --> sync["同期"]
   sync --> loop
