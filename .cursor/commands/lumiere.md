@@ -1,5 +1,5 @@
 ---
-description: Lumiere を有効化（この会話で議事録同期を on）
+description: Lumiere on/off（引数なしまたは on で有効化、off で無効化）
 ---
 
 /lumiere

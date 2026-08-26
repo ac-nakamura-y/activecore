@@ -14,7 +14,6 @@ activecore/
   .cursor/hooks.json
   .cursor/hooks/lumiere.py
   .cursor/commands/lumiere.md
-  .cursor/commands/lumiere-off.md
   db/refs.sqlite
   tmp/
 ```
@@ -104,9 +103,9 @@ flowchart LR
 
 ### 制御
 
-会話単位で on / off を切り替える。`/` メニューから `/lumiere` または `/lumiere-off` を選んでも、手入力でも同じ。いずれも Agent は起動せず、確認メッセージだけ表示する。有効化直後は次の Agent 終了時に即時同期する。
+会話単位で on / off を切り替える。`/lumiere`（デフォルト on）、`/lumiere on`、`/lumiere off` のいずれかを送る。いずれも Agent は起動せず、確認メッセージだけ表示する。有効化直後は次の Agent 終了時に即時同期する。
 
 | 操作 | コマンド |
 | :-- | :-- |
 | 有効化 | `/lumiere` または `/lumiere on` |
-| 無効化 | `/lumiere off` または `/lumiere-off` |
+| 無効化 | `/lumiere off` |
