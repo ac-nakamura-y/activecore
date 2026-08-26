@@ -90,7 +90,7 @@ tick を受け取ったら、未登録分だけ save する。
 
 ### 運用
 
-`/cogsworth` または `/cogsworth on` でバックグランドループを起動し、直後に同期を 1 回実行する。その後は平日 `10:00`〜`19:30` の各時 `15` 分・`45` 分（`Asia/Tokyo`）に tick が出て、同期手順が繰り返される。`/cogsworth off` でループを停止する。
+`/cogsworth` または `/cogsworth on` でバックグランドループを起動し、直後に同期を 1 回実行する。その後は平日、各時 `15` 分・`45` 分（`Asia/Tokyo`、既定は `10` 時〜`19` 時、`COGSWORTH_START_HOUR` / `COGSWORTH_END_HOUR` で変更可）に tick が出て、同期手順が繰り返される。`/cogsworth off` でループを停止する。
 
 ```mermaid
 flowchart LR
