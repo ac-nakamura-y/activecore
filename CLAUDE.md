@@ -11,7 +11,8 @@ activecore/
   CLAUDE.md
   schema.sql
   bin/activecore
-  .claude/commands/lumiere.md
+  .claude/commands/cogsworth.md
+  .claude/commands/script/
   db/refs.sqlite
   tmp/
 ```
@@ -71,9 +72,9 @@ Agent はメタデータ登録・本文キャッシュ・タグ付与・要約�
 | Notion | `https://www.notion.so/{pageId}` | Notion MCP |
 | ローカル | 絶対パス | ファイル read |
 
-## Lumiere
+## Cogsworth
 
-終了済みカレンダーイベントに添付された Gemini 議事録を `refs` に登録する。Agent が同期手順を実行し、定期実行は背景シェルが `AGENT_LOOP_TICK_meeting_notes_sync` を出して tick ごとに走る。有効化と停止は `/lumiere`（`.claude/commands/lumiere.md`）で行う。
+終了済みカレンダーイベントに添付された Gemini 議事録を `refs` に登録する。Agent が同期手順を実行し、定期実行は背景シェルが `AGENT_LOOP_TICK_cogsworth` を出して tick ごとに走る。有効化と停止は `/cogsworth`（`.claude/commands/cogsworth.md`）で行う。
 
 ### 同期
 
@@ -89,13 +90,13 @@ tick を受け取ったら、未登録分だけ save する。
 
 ### 運用
 
-`/lumiere` または `/lumiere on` で背景ループを起動し、直後に同期を 1 回実行する。その後は平日 `10:00`〜`19:30` の各時 `15` 分・`45` 分（`Asia/Tokyo`）に tick が出て、同期手順が繰り返される。`/lumiere off` でループを停止する。
+`/cogsworth` または `/cogsworth on` で背景ループを起動し、直後に同期を 1 回実行する。その後は平日 `10:00`〜`19:30` の各時 `15` 分・`45` 分（`Asia/Tokyo`）に tick が出て、同期手順が繰り返される。`/cogsworth off` でループを停止する。
 
 ```mermaid
 flowchart LR
-  enable["/lumiere"] --> loop["背景シェル"]
-  loop --> tick["tick通知"]
+  enable["/cogsworth"] --> loop["背景シェル"]
+  loop --> tick["tick"]
   tick --> sync["同期"]
   sync --> loop
-  disable["/lumiere off"] --> stop["停止"]
+  disable["/cogsworth off"] --> stop["停止"]
 ```
