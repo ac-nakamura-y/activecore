@@ -89,7 +89,7 @@ tick を受け取ったら、未登録分だけ save する。
 
 ### 運用
 
-`/lumiere` または `/lumiere on` で背景ループを起動し、直後に同期を 1 回実行する。その後は `sleep`（既定 5 分、`LUMIERE_SLEEP_SECONDS` で変更可）ごとに tick が出て、同期手順が繰り返される。`/lumiere off` でループを停止する。
+`/lumiere` または `/lumiere on` で背景ループを起動し、直後に同期を 1 回実行する。その後は平日 `10:00`〜`19:30` の各時 `15` 分・`45` 分（`Asia/Tokyo`）に tick が出て、同期手順が繰り返される。`/lumiere off` でループを停止する。
 
 ```mermaid
 flowchart LR
