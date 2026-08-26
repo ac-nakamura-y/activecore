@@ -25,5 +25,5 @@ for _ in range(14):
 raise SystemExit("no slot found")
 PY
 )"
-  echo 'AGENT_LOOP_TICK_cog {"prompt":"CLAUDE.md の Cogsworth > 同期 手順を実行。"}'
+  echo 'AGENT_LOOP_TICK_COGSWORTH {"prompt":"CLAUDE.md の Cogsworth > 同期 手順を実行。"}'
 done

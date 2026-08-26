@@ -13,7 +13,7 @@ argument-hint: on | off
 
 ### off
 
-タイトル `Loop cogsworth` のバックグランドシェルを停止する。見つからなければその旨を伝える。
+タイトル `Cogsworth` のバックグランドシェルを停止する。見つからなければその旨を伝える。
 
 ### on
 
@@ -27,8 +27,8 @@ argument-hint: on | off
 
 | 項目 | 値 |
 | :-- | :-- |
-| タイトル | `Loop cogsworth` |
-| pattern | `^AGENT_LOOP_TICK_cog` |
+| タイトル | `Cogsworth` |
+| pattern | `^AGENT_LOOP_TICK_COGSWORTH` |
 | 実行 | `block_until_ms: 0`（バックグランド） |
 
-`AGENT_LOOP_TICK_cog` を受け取ったら同期手順だけ実行する。ループは再起動しない。
+`AGENT_LOOP_TICK_COGSWORTH` を受け取ったら同期手順だけ実行する。ループは再起動しない。

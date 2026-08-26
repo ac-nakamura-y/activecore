@@ -74,7 +74,7 @@ Agent はメタデータ登録・本文キャッシュ・タグ付与・要約�
 
 ## Cogsworth
 
-終了済みカレンダーイベントに添付された Gemini 議事録を `refs` に登録する。Agent が同期手順を実行し、定期実行はバックグランドシェルが `AGENT_LOOP_TICK_cog` を出して tick ごとに走る。有効化と停止は `/cogsworth`（`.claude/commands/cogsworth.md`）で行う。
+終了済みカレンダーイベントに添付された Gemini 議事録を `refs` に登録する。Agent が同期手順を実行し、定期実行はバックグランドシェルが `AGENT_LOOP_TICK_COGSWORTH` を出して tick ごとに走る。有効化と停止は `/cogsworth`（`.claude/commands/cogsworth.md`）で行う。
 
 ### 同期
 
