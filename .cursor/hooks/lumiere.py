@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lumiere: enabled conversations sleep until the next tick, then notify the agent."""
+"""Lumiere: enable/disable and sleep duration for in-chat agent loop."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ import json
 import os
 import re
 import sys
-import time
 from datetime import datetime, timedelta, time as dt_time
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -16,13 +15,18 @@ ROOT = Path(__file__).resolve().parents[2]
 STATE = ROOT / "tmp" / "lumiere.json"
 LOG = ROOT / "tmp" / "lumiere.log"
 TZ = ZoneInfo("Asia/Tokyo")
-FOLLOWUP = (
-    "AGENT_LOOP_TICK_meeting_notes_sync: "
-    "CLAUDE.md の Lumiere > 同期 手順を実行。"
-)
 
 LUMIERE_OFF = re.compile(r"^/lumiere\s+off\s*$", re.IGNORECASE)
 LUMIERE_ON = re.compile(r"^/lumiere(?:\s+on)?\s*$", re.IGNORECASE)
+
+LOOP_INSTRUCTION = (
+    "Lumiere が有効化されました。この会話で Lumiere ループを開始してください。"
+    "会話を終了せず、以下を `tmp/lumiere.json` の enabled が true の間、繰り返します。"
+    "1. Shell で `sleep $(python3 .cursor/hooks/lumiere.py sleep-seconds)` を実行し、完了まで待つ"
+    "2. CLAUDE.md の Lumiere > 同期 手順を実行"
+    "3. 1 に戻る"
+    "今すぐ 1 から開始してください。"
+)
 
 
 def log(message: str) -> None:
@@ -38,16 +42,15 @@ def read_payload() -> dict:
         return {}
 
 
-def read_enabled() -> list[str]:
+def read_state() -> bool:
     try:
         data = json.loads(STATE.read_text(encoding="utf-8"))
-        enabled = data.get("enabled", [])
-        return enabled if isinstance(enabled, list) else []
+        return bool(data.get("enabled"))
     except (OSError, json.JSONDecodeError):
-        return []
+        return False
 
 
-def write_enabled(enabled: list[str]) -> None:
+def write_state(enabled: bool) -> None:
     STATE.parent.mkdir(parents=True, exist_ok=True)
     STATE.write_text(
         json.dumps({"enabled": enabled}, ensure_ascii=False, indent=2) + "\n",
@@ -77,10 +80,6 @@ def parse_command(prompt: str) -> bool | None:
 
 
 def next_tick(after: datetime) -> datetime:
-    test_minutes = int(os.environ.get("LUMIERE_TEST_INTERVAL_MINUTES", "0"))
-    if test_minutes > 0:
-        return after + timedelta(minutes=test_minutes)
-
     cursor = after
     for _ in range(400):
         day = cursor.date()
@@ -94,79 +93,61 @@ def next_tick(after: datetime) -> datetime:
     raise RuntimeError("no tick found")
 
 
-def set_enabled(conversation_id: str, enabled: bool) -> str:
-    ids = read_enabled()
-    if enabled:
-        if conversation_id not in ids:
-            ids.append(conversation_id)
-        write_enabled(ids)
-        log(f"ENABLED {conversation_id}")
-        return "Lumiere を有効化しました。"
-    ids = [item for item in ids if item != conversation_id]
-    write_enabled(ids)
-    log(f"DISABLED {conversation_id}")
-    return "Lumiere を無効化しました。"
+def sleep_seconds() -> int:
+    if value := os.environ.get("LUMIERE_SLEEP_SECONDS"):
+        return max(1, int(value))
+    now = datetime.now(TZ)
+    target = next_tick(now)
+    return max(1, int((target - now).total_seconds()))
 
 
 def before_submit() -> int:
     payload = read_payload()
-    conversation_id = payload.get("conversation_id", "")
     command = parse_command(payload.get("prompt", ""))
 
-    if command is None or not conversation_id:
+    if command is None:
         print(json.dumps({"continue": True}))
         return 0
 
     if command:
-        set_enabled(conversation_id, True)
+        write_state(True)
+        log("ENABLED")
         print(
             json.dumps(
                 {
                     "continue": True,
                     "user_message": "Lumiere を有効化しました。",
-                    "agent_message": (
-                        "Lumiere が有効化されました。"
-                        "『有効化しました』とだけ返答して終了してください。"
-                        "ツールは使わず、同期もまだ行わないでください。"
-                    ),
+                    "agent_message": LOOP_INSTRUCTION,
                 },
                 ensure_ascii=False,
             )
         )
         return 0
 
-    message = set_enabled(conversation_id, False)
-    print(json.dumps({"continue": False, "user_message": message}, ensure_ascii=False))
-    return 0
-
-
-def stop() -> int:
-    payload = read_payload()
-    conversation_id = payload.get("conversation_id", "")
-    enabled = read_enabled()
-    log(f"STOP conv={conversation_id or '<missing>'} enabled={conversation_id in enabled}")
-
-    if conversation_id not in enabled:
-        return 0
-
-    now = datetime.now(TZ)
-    target = next_tick(now)
-    seconds = max(1, int((target - now).total_seconds()))
-    test_minutes = int(os.environ.get("LUMIERE_TEST_INTERVAL_MINUTES", "0"))
-    mode = f"test={test_minutes}m" if test_minutes > 0 else "prod"
-    log(f"SLEEP sec={seconds} next={target.isoformat()} mode={mode}")
-    time.sleep(seconds)
-    log(f"FOLLOWUP {conversation_id}")
-    print(json.dumps({"followup_message": FOLLOWUP}, ensure_ascii=False))
+    write_state(False)
+    log("DISABLED")
+    print(
+        json.dumps(
+            {"continue": False, "user_message": "Lumiere を無効化しました。"},
+            ensure_ascii=False,
+        )
+    )
     return 0
 
 
 def main() -> int:
-    commands = {"before-submit": before_submit, "stop": stop}
-    if len(sys.argv) != 2 or sys.argv[1] not in commands:
-        print("usage: lumiere.py <before-submit|stop>", file=sys.stderr)
+    if len(sys.argv) != 2:
+        print("usage: lumiere.py <before-submit|sleep-seconds>", file=sys.stderr)
         return 2
-    return commands[sys.argv[1]]()
+
+    if sys.argv[1] == "before-submit":
+        return before_submit()
+    if sys.argv[1] == "sleep-seconds":
+        print(sleep_seconds())
+        return 0
+
+    print("usage: lumiere.py <before-submit|sleep-seconds>", file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":

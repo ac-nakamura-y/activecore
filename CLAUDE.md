@@ -75,7 +75,7 @@ Agent はメタデータ登録・本文キャッシュ・タグ付与・要約�
 
 ## Lumiere
 
-終了済みカレンダーイベントの Gemini 議事録を `refs` に登録する。同期手順は Agent が実行し、`stop` hook は有効化した会話で次のティックまで待ってから Agent を起こすだけ。初期状態は off。状態は `tmp/lumiere.json`、ログは `tmp/lumiere.log`。
+終了済みカレンダーイベントの Gemini 議事録を `refs` に登録する。同期手順は Agent が実行する。待機は `stop` hook ではなく、Agent がこの会話内で `sleep` を実行して完了まで待つ。初期状態は off。状態は `tmp/lumiere.json`（`enabled: true/false`）、ログは `tmp/lumiere.log`。
 
 ### 同期
 
@@ -91,19 +91,24 @@ Agent はメタデータ登録・本文キャッシュ・タグ付与・要約�
 
 ### スケジュール
 
-平日 `10:00` から `19:30`、毎時 `:15` と `:45` に同期する。Agent 終了後、`stop` hook が次のティックまでスリープし `followup_message` で Agent を起こす。時間外は翌平日 `10:15` まで待つ。ループ上限はない。検証時は `LUMIERE_TEST_INTERVAL_MINUTES=5` で 5 分間隔にできる。
+`/lumiere` で有効化した会話で、Agent は会話を終了せず次を繰り返す。
+
+1. `sleep $(python3 .cursor/hooks/lumiere.py sleep-seconds)` を実行し、完了まで待つ
+2. 同期手順を実行
+3. `tmp/lumiere.json` の `enabled` が `true` なら 1 に戻る
+
+検証時は `LUMIERE_SLEEP_SECONDS=300`（5 分）。本番は未設定で平日 `10:00`–`19:30` の `:15` / `:45` までの秒数を返す。
 
 ```mermaid
 flowchart LR
-  agentStop[Agent終了] --> stopHook[stop hook]
-  stopHook --> sleep[待機]
-  sleep --> tick[同期]
-  tick --> agentStop
+  enable["/lumiere"] --> sleep["sleep in chat"]
+  sleep --> sync[同期]
+  sync --> sleep
 ```
 
 ### 制御
 
-会話単位で on / off を切り替える。`/lumiere`（デフォルト on）、`/lumiere on`、`/lumiere off` を送る。有効化時は Agent が短く応答して終了し、その直後から `stop` hook の待機ループが始まる。無効化時は Agent を起動せず確認メッセージだけ表示する。
+会話単位の on / off。`/lumiere`（デフォルト on）、`/lumiere on`、`/lumiere off` を送る。有効化時は Agent が上記ループを開始する。無効化時は Agent を起動せず確認メッセージだけ表示し、ループ中の Agent は次の sleep 前の確認で終了する。
 
 | 操作 | コマンド |
 | :-- | :-- |

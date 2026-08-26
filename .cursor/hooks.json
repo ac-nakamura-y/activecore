@@ -3,14 +3,7 @@
   "hooks": {
     "beforeSubmitPrompt": [
       {
-        "command": "python3 .cursor/hooks/lumiere.py before-submit"
-      }
-    ],
-    "stop": [
-      {
-        "command": "env LUMIERE_TEST_INTERVAL_MINUTES=5 python3 .cursor/hooks/lumiere.py stop",
-        "timeout": 2592000,
-        "loop_limit": null
+        "command": "env LUMIERE_SLEEP_SECONDS=300 python3 .cursor/hooks/lumiere.py before-submit"
       }
     ]
   }
