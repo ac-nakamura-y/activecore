@@ -11,9 +11,7 @@ activecore/
   CLAUDE.md
   schema.sql
   bin/activecore
-  .cursor/hooks.json
-  .cursor/hooks/lumiere.py
-  .cursor/commands/lumiere.md
+  .claude/commands/lumiere.md
   db/refs.sqlite
   tmp/
 ```
@@ -75,7 +73,7 @@ Agent はメタデータ登録・本文キャッシュ・タグ付与・要約�
 
 ## Lumiere
 
-終了済みカレンダーイベントの Gemini 議事録を `refs` に登録する。同期手順は Agent が実行する。待機は `stop` hook ではなく、Agent がこの会話内で `sleep` を実行して完了まで待つ。初期状態は off。状態は `tmp/lumiere.json`（`enabled: true/false`）、ログは `tmp/lumiere.log`。
+終了済みカレンダーイベントの Gemini 議事録を `refs` に登録する。同期手順は Agent が実行する。定期実行は背景シェルが `AGENT_LOOP_TICK_meeting_notes_sync` を出力し、Agent が tick ごとに同期する。起動・停止は `.claude/commands/lumiere.md` の `/lumiere on` / `/lumiere off`。
 
 ### 同期
 
@@ -91,24 +89,22 @@ Agent はメタデータ登録・本文キャッシュ・タグ付与・要約�
 
 ### スケジュール
 
-`/lumiere` で有効化した会話で、Agent は会話を終了せず次を繰り返す。
+`/lumiere on`（引数省略時も on）で Agent は `.claude/commands/lumiere.md` に従い背景シェルループを起動し、初回同期後は tick ごとに同期する。
 
-1. `sleep $(python3 .cursor/hooks/lumiere.py sleep-seconds)` を実行し、完了まで待つ
-2. 同期手順を実行
-3. `tmp/lumiere.json` の `enabled` が `true` なら 1 に戻る
+1. 背景シェルが `sleep`（既定 5 分）のあと `AGENT_LOOP_TICK_meeting_notes_sync` を出力
+2. Agent が tick を受け取り同期手順を実行
 
-検証時は `LUMIERE_SLEEP_SECONDS=300`（5 分）。本番は未設定で平日 `10:00`–`19:30` の `:15` / `:45` までの秒数を返す。
+間隔はループ内の `LUMIERE_SLEEP_SECONDS`（未設定時 `300`）で変更する。
 
 ```mermaid
 flowchart LR
-  enable["/lumiere"] --> sleep["sleep in chat"]
-  sleep --> sync[同期]
-  sync --> sleep
+  enable["/lumiere"] --> loop["背景シェルループ"]
+  loop --> tick["AGENT_LOOP_TICK"]
+  tick --> sync[同期]
+  sync --> loop
 ```
 
 ### 制御
-
-会話単位の on / off。`/lumiere`（デフォルト on）、`/lumiere on`、`/lumiere off` を送る。有効化時は Agent が上記ループを開始する。無効化時は Agent を起動せず確認メッセージだけ表示し、ループ中の Agent は次の sleep 前の確認で終了する。
 
 | 操作 | コマンド |
 | :-- | :-- |
