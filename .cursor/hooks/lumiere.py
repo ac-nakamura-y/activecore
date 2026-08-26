@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
 from datetime import datetime, timedelta, time as dt_time
@@ -18,6 +19,9 @@ FOLLOWUP = (
     "AGENT_LOOP_TICK_meeting_notes_sync: "
     "CLAUDE.md の Lumiere > 同期 手順を実行。"
 )
+
+LUMIERE_OFF = re.compile(r"^/lumiere\s+off\s*$", re.IGNORECASE)
+LUMIERE_ON = re.compile(r"^/lumiere(?:\s+on)?\s*$", re.IGNORECASE)
 
 
 def log(message: str) -> None:
@@ -55,12 +59,48 @@ def write_state(enabled: list[str], wake: str | None) -> None:
     )
 
 
+def strip_frontmatter(text: str) -> str:
+    if not text.startswith("---"):
+        return text
+    parts = text.split("---", 2)
+    if len(parts) < 3:
+        return text
+    return parts[2].strip()
+
+
 def parse_command(prompt: str) -> bool | None:
-    text = prompt.strip().lower()
-    if text == "/lumiere off":
+    text = strip_frontmatter(prompt.strip())
+    for line in text.splitlines():
+        candidate = line.strip()
+        if not candidate or candidate.startswith("---"):
+            continue
+        if LUMIERE_OFF.match(candidate):
+            return False
+        if LUMIERE_ON.match(candidate):
+            return True
+    if LUMIERE_OFF.match(text):
         return False
-    if text in ("/lumiere", "/lumiere on"):
+    if LUMIERE_ON.match(text):
         return True
+    return None
+
+
+def detect_command(payload: dict) -> bool | None:
+    action = parse_command(payload.get("prompt", ""))
+    if action is not None:
+        return action
+    for attachment in payload.get("attachments") or []:
+        if attachment.get("type") != "file":
+            continue
+        path = Path(attachment.get("file_path", ""))
+        if "lumiere" not in path.name.lower():
+            continue
+        try:
+            action = parse_command(path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        if action is not None:
+            return action
     return None
 
 
@@ -82,36 +122,48 @@ def followup() -> None:
     print(json.dumps({"followup_message": FOLLOWUP}, ensure_ascii=False))
 
 
+def set_enabled(conversation_id: str, enabled: bool) -> str:
+    enabled_ids, wake = read_state()
+    if enabled:
+        if conversation_id not in enabled_ids:
+            enabled_ids.append(conversation_id)
+        write_state(enabled_ids, conversation_id)
+        log(f"ENABLED {conversation_id}")
+        return "Lumiere を有効化しました。次の Agent 終了後に同期を開始します。"
+    enabled_ids = [item for item in enabled_ids if item != conversation_id]
+    write_state(enabled_ids, None if wake == conversation_id else wake)
+    log(f"DISABLED {conversation_id}")
+    return "Lumiere を無効化しました。"
+
+
 def before_submit() -> int:
     payload = read_payload()
-    command = parse_command(payload.get("prompt", ""))
     conversation_id = payload.get("conversation_id", "")
-    if command is None or not conversation_id:
+    command = detect_command(payload)
+
+    if command is None:
+        if "lumiere" in payload.get("prompt", "").lower():
+            log(f"UNMATCHED prompt={payload.get('prompt', '')[:200]!r}")
         print(json.dumps({"continue": True}))
         return 0
 
-    enabled, wake = read_state()
-    if command:
-        if conversation_id not in enabled:
-            enabled.append(conversation_id)
-        write_state(enabled, conversation_id)
-        log(f"ENABLED {conversation_id}")
-        message = "Lumiere を有効化しました。"
-    else:
-        enabled = [item for item in enabled if item != conversation_id]
-        write_state(enabled, None if wake == conversation_id else wake)
-        log(f"DISABLED {conversation_id}")
-        message = "Lumiere を無効化しました。"
+    if not conversation_id:
+        log("BEFORE_SUBMIT missing conversation_id")
+        print(json.dumps({"continue": True}))
+        return 0
 
+    message = set_enabled(conversation_id, command)
     print(json.dumps({"continue": False, "user_message": message}, ensure_ascii=False))
     return 0
 
 
 def stop() -> int:
-    conversation_id = read_payload().get("conversation_id", "")
+    payload = read_payload()
+    conversation_id = payload.get("conversation_id", "")
     enabled, wake = read_state()
+    log(f"STOP conv={conversation_id or '<missing>'} enabled={conversation_id in enabled} wake={wake}")
+
     if conversation_id not in enabled:
-        log(f"SKIP {conversation_id or '<missing>'}")
         return 0
 
     if wake == conversation_id:

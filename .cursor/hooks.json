@@ -3,13 +3,12 @@
   "hooks": {
     "beforeSubmitPrompt": [
       {
-        "command": ".cursor/hooks/lumiere.py before-submit",
-        "matcher": "UserPromptSubmit"
+        "command": "python3 .cursor/hooks/lumiere.py before-submit"
       }
     ],
     "stop": [
       {
-        "command": ".cursor/hooks/lumiere.py stop",
+        "command": "python3 .cursor/hooks/lumiere.py stop",
         "timeout": 2592000,
         "loop_limit": null
       }
