@@ -74,7 +74,7 @@ Agent はメタデータ登録・本文キャッシュ・タグ付与・要約�
 
 ## Cogsworth
 
-終了済みカレンダーイベントに添付された Gemini 議事録を `refs` に登録する。Agent が同期手順を実行し、定期実行はバックグランドシェルが `AGENT_LOOP_TICK_COGSWORTH` を出して tick ごとに走る。有効化と停止は `/cogsworth`（`.claude/commands/cogsworth.md`）で行う。
+終了済みカレンダーイベントに添付された Gemini 議事録を `refs` に登録する。Agent が同期手順を実行し、定期実行はバックグランドシェルが `AGENT_LOOP_TICK_COGSWORTH` を出して tick ごとに走る。有効化・停止・手順の詳細は `.claude/commands/cogsworth.md`。
 
 ### 同期
 
@@ -84,7 +84,7 @@ tick を受け取ったら、未登録分だけ save する。
 | :-- | :-- |
 | 対象 | Calendar `list_events`（`y.nakamura@activecore.jp`、過去 `7` 日、終了 `30` 分以上前） |
 | フィルタ | 添付 `title` が `Gemini によるメモ` の doc ID |
-| 登録 | Drive `read_file_content` → 一時ファイル → `save --require-tag`（source は参照情報の Google Doc 形式） |
+| 登録 | Drive `read_file_content` → `tmp/cogsworth_<doc_id>.txt` → `save --content-file ... --require-tag`（source は参照情報の Google Doc 形式） |
 
 タグ推定に失敗したら推測せず、ユーザーに確認する。
 
