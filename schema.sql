@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS ref_tags (
 
 INSERT OR IGNORE INTO tags (name, category) VALUES
   ('阪急交通社', 'client'),
+  ('阪急', 'client'),
   ('トリプルエス', 'client'),
   ('SABON', 'client'),
   ('キナリ', 'client'),
@@ -90,6 +91,8 @@ INSERT INTO tag_rules (tag, pattern) VALUES
   ('阪急交通社', '阪急交通社'),
   ('阪急交通社', '[マーケOps] Weekly MTG'),
   ('阪急交通社', '確定：阪急さま定例'),
+  -- 阪急
+  ('阪急', '阪急'),
   -- トリプルエス
   ('トリプルエス', 'トリプルエス'),
   ('トリプルエス', '課題確認の定例会（NBナラマケ-AC）'),
