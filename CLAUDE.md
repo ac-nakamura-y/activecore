@@ -1,8 +1,8 @@
-# activecore
+# BatB
 
 ## Overview
 
-activecore は会議・チャット・ドキュメントの文脈を Agent に渡すためのワークスペースである。SQLite の Lumiere（ `db/lumiere.sqlite` ）に資料をキャッシュし、共通語彙で検索と分類をそろえる。資料の正本は常に `source` 側（Backlog URL、Google Doc URL など）にあり、Lumiere は索引とローカルコピーを保持する。
+BatB は会議・チャット・ドキュメントの文脈を Agent に渡すためのワークスペースである。SQLite の Lumiere（ `db/lumiere.sqlite` ）に資料をキャッシュし、共通語彙で検索と分類をそろえる。資料の正本は常に `source` 側（Backlog URL、Google Doc URL など）にあり、Lumiere は索引とローカルコピーを保持する。
 
 Lumiere のスキーマと CLI の詳細は [docs/lumiere.md](./docs/lumiere.md)、議事録の自動取り込みは [docs/cogsworth.md](./docs/cogsworth.md) にまとめている。
 
@@ -19,12 +19,12 @@ Lumiere のスキーマと CLI の詳細は [docs/lumiere.md](./docs/lumiere.md)
 `save` の直後、バックグラウンドで要約ジョブ（ `summarize` ）が走る。1 回の agent 呼び出しで要約と共通語彙の更新をまとめて行う。本文からの語彙抽出は `term learn` を手動で実行する。
 
 ```
-activecore/
+batb/
   CLAUDE.md
   docs/lumiere.md
   docs/cogsworth.md
   schema.sql
-  bin/activecore
+  bin/batb
   .claude/commands/cogsworth.md
   .claude/commands/script/
   db/lumiere.sqlite
@@ -37,15 +37,15 @@ activecore/
 
 | operation | command |
 | :-- | :-- |
-| 保存 | `activecore save --title T --source URL --content-file PATH [--term NAME ...] [--require-term]` |
-| 本文 | `activecore get ID` |
-| 検索 | `activecore query [KEYWORD ...]` / `query --term NAME ...` |
-| 用語推定 | `activecore term infer "タイトルや文面"` |
-| 用語一覧 | `activecore term list [--category CAT]` |
-| 用語詳細 | `activecore term query NAME`（完全一致で詳細表示） |
-| 用語追加 | `activecore term add --name N --category CAT [--alias A ...]` |
-| 語彙学習 | `activecore term learn ID`（手動・バッチ用） |
-| 資料の用語 | `activecore reference link list|add|remove|set ID --term NAME ...` |
+| 保存 | `batb save --title T --source URL --content-file PATH [--term NAME ...] [--require-term]` |
+| 本文 | `batb get ID` |
+| 検索 | `batb query [KEYWORD ...]` / `query --term NAME ...` |
+| 用語推定 | `batb term infer "タイトルや文面"` |
+| 用語一覧 | `batb term list [--category CAT]` |
+| 用語詳細 | `batb term query NAME`（完全一致で詳細表示） |
+| 用語追加 | `batb term add --name N --category CAT [--alias A ...]` |
+| 語彙学習 | `batb term learn ID`（手動・バッチ用） |
+| 資料の用語 | `batb reference link list|add|remove|set ID --term NAME ...` |
 
 ## Agent workflow
 
@@ -76,11 +76,11 @@ Agent はメタデータ登録・本文キャッシュ・用語付与・要約�
 検索では、クライアント名・会議名・プロジェクト名・課題キー・人名など、文脈から複数パターンを試す。`term infer` で拾える用語を確認してから `query --term` する。本文は `get <id>` で取る。要約だけでは論点や決定事項の突合はできない。
 
 ```bash
-~/activecore/bin/activecore term infer "確定：トリプルエスさま定例"
-~/activecore/bin/activecore term query トリプルエス
-~/activecore/bin/activecore query --term トリプルエス
-~/activecore/bin/activecore query 要件 HTML
-~/activecore/bin/activecore query --limit 10
+~/activecore/bin/batb term infer "確定：トリプルエスさま定例"
+~/activecore/bin/batb term query トリプルエス
+~/activecore/bin/batb query --term トリプルエス
+~/activecore/bin/batb query 要件 HTML
+~/activecore/bin/batb query --limit 10
 ```
 
 ## Source formats

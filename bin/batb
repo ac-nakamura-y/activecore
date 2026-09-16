@@ -5,32 +5,32 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LUMIERE="$ROOT/db/lumiere.sqlite"
 SCHEMA="$ROOT/schema.sql"
 TMP_DIR="$ROOT/tmp"
-LOG="$TMP_DIR/activecore.log"
+LOG="$TMP_DIR/batb.log"
 
 usage() {
   cat <<EOF
 usage:
-  activecore save  --title TITLE --source SOURCE --content-file PATH [--term NAME ...] [--require-term]
-  activecore summarize ID --content-file PATH
-  activecore get ID
-  activecore query|list [--limit N] [--term NAME ...] [KEYWORD ...]
-  activecore reference link list ID
-  activecore reference link add ID --term NAME [...]
-  activecore reference link remove ID --term NAME [...]
-  activecore reference link set ID --term NAME [...]
-  activecore term list [--category CAT]
-  activecore term query [KEYWORD ...]
-  activecore term infer TEXT...
-  activecore term add --name NAME --category CAT [--description DESC] [--alias ALIAS ...]
-  activecore term learn ID
+  batb save  --title TITLE --source SOURCE --content-file PATH [--term NAME ...] [--require-term]
+  batb summarize ID --content-file PATH
+  batb get ID
+  batb query|list [--limit N] [--term NAME ...] [KEYWORD ...]
+  batb reference link list ID
+  batb reference link add ID --term NAME [...]
+  batb reference link remove ID --term NAME [...]
+  batb reference link set ID --term NAME [...]
+  batb term list [--category CAT]
+  batb term query [KEYWORD ...]
+  batb term infer TEXT...
+  batb term add --name NAME --category CAT [--description DESC] [--alias ALIAS ...]
+  batb term learn ID
 
 examples:
-  activecore save --title "要件整理" --source "https://example.backlog.com/view/PROJ-1" --content-file /tmp/body.md --term トリプルエス --term FDE
-  activecore get 550e8400-e29b-41d4-a716-446655440000
-  activecore query --term トリプルエス 要件
-  activecore query --limit 10
-  activecore term infer "確定：トリプルエスさま定例"
-  activecore term query トリプルエス
+  batb save --title "要件整理" --source "https://example.backlog.com/view/PROJ-1" --content-file /tmp/body.md --term トリプルエス --term FDE
+  batb get 550e8400-e29b-41d4-a716-446655440000
+  batb query --term トリプルエス 要件
+  batb query --limit 10
+  batb term infer "確定：トリプルエスさま定例"
+  batb term query トリプルエス
 EOF
 }
 
@@ -236,7 +236,7 @@ validate_term_names() {
     id="$(resolve_term_id "$name")"
     if [[ -z "$id" ]]; then
       echo "error: unknown term: $name" >&2
-      echo "hint: activecore term list" >&2
+      echo "hint: batb term list" >&2
       exit 1
     fi
   done
@@ -441,7 +441,7 @@ cmd_save() {
   local tmp_content="$TMP_DIR/${id}.md"
   cp "$content_file" "$tmp_content"
 
-  local script_path="$ROOT/bin/activecore"
+  local script_path="$ROOT/bin/batb"
   nohup "$script_path" summarize "$id" --content-file "$tmp_content" >>"$LOG" 2>&1 &
   disown >/dev/null 2>&1 || true
 

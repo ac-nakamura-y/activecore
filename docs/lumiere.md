@@ -2,7 +2,7 @@
 
 ## Overview
 
-Lumiere は activecore のローカル DB で、ファイルは `db/lumiere.sqlite` に置く。Backlog の課題 URL や Google Doc の URL など、`source` が正本で、Lumiere は索引と本文キャッシュを担う。資料本体は `reference` テーブル、クライアント名・会議名・人名などの共通語彙は `terms` ほかのテーブルで管理する。詳細な手順は [CLAUDE.md](../CLAUDE.md) を参照する。
+Lumiere は BatB のローカル DB で、ファイルは `db/lumiere.sqlite` に置く。Backlog の課題 URL や Google Doc の URL など、`source` が正本で、Lumiere は索引と本文キャッシュを担う。資料本体は `reference` テーブル、クライアント名・会議名・人名などの共通語彙は `terms` ほかのテーブルで管理する。詳細な手順は [CLAUDE.md](../CLAUDE.md) を参照する。
 
 ## Schema
 
@@ -89,7 +89,7 @@ CLI のサブコマンド名は英語のままだが、ドキュメント上は�
 
 ### Vocabulary commands
 
-共通語彙の参照・追加・学習に使う。いずれも `activecore term` で始まる。
+共通語彙の参照・追加・学習に使う。いずれも `batb term` で始まる。
 
 | command | role |
 | :-- | :-- |
@@ -104,17 +104,17 @@ CLI のサブコマンド名は英語のままだが、ドキュメント上は�
 検索では、まずタイトルや文面から拾える用語を確認し、その用語で資料を絞り込む。
 
 ```bash
-activecore term infer "確定：トリプルエスさま定例"
-activecore term query トリプルエス
-activecore query --term トリプルエス
-activecore get <id>
+batb term infer "確定：トリプルエスさま定例"
+batb term query トリプルエス
+batb query --term トリプルエス
+batb get <id>
 ```
 
 保存では、title から用語を自動推定できる場合は `--term` を省略できる。推定できない場合は `--require-term` 付きで save を止め、用語を確認してから `--term` を付ける。
 
 ```bash
-activecore save --title "..." --source "..." --content-file /tmp/body.md --require-term
-activecore save ... --term トリプルエス --term FDE
+batb save --title "..." --source "..." --content-file /tmp/body.md --require-term
+batb save ... --term トリプルエス --term FDE
 ```
 
 `save` の直後、バックグラウンドで要約ジョブ（ `summarize` ）が走る。1 回の agent 呼び出しで要約テキストと共通語彙の更新をまとめて行う。本文からの語彙抽出は `term learn` を手動で実行する。

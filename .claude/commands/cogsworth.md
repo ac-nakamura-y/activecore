@@ -72,22 +72,22 @@ Shell ツールでは `block_until_ms` を `0` にし、`notify_on_output` を�
 | `timeZone` | `Asia/Tokyo` |
 | `pageSize` | `100` |
 
-未登録の洗い出しでは、`activecore query` の `source` から doc ID を集め、`list_events` の添付で `title` が `Gemini によるメモ` の doc と突合する。`reference` にない doc ID が未登録である。
+未登録の洗い出しでは、`batb query` の `source` から doc ID を集め、`list_events` の添付で `title` が `Gemini によるメモ` の doc と突合する。`reference` にない doc ID が未登録である。
 
-各未登録件は次の順で登録する。Drive MCP の `read_file_content` で本文を取得し、`~/activecore/tmp/cogsworth_<doc_id>.txt` に保存する。必要なら `activecore term infer "<イベント名>"` で共通語彙を確認する。推定できなければ推測せずユーザーに確認する。`save` では `--content-file` が必須で、パスを末尾の positional 引数として渡す形式は使えない。
+各未登録件は次の順で登録する。Drive MCP の `read_file_content` で本文を取得し、`~/activecore/tmp/cogsworth_<doc_id>.txt` に保存する。必要なら `batb term infer "<イベント名>"` で共通語彙を確認する。推定できなければ推測せずユーザーに確認する。`save` では `--content-file` が必須で、パスを末尾の positional 引数として渡す形式は使えない。
 
 `--title` にイベント名を渡すと用語は自動推定される。推定できない場合のみ `--term` を明示する。
 
 ```bash
 # 通常: title から自動推定
-~/activecore/bin/activecore save \
+~/activecore/bin/batb save \
   --title "<イベント名>" \
   --source "https://docs.google.com/document/d/<doc_id>/edit" \
   --content-file ~/activecore/tmp/cogsworth_<doc_id>.txt \
   --require-term
 
 # 推定不能時: infer で確認した用語を付与
-~/activecore/bin/activecore save \
+~/activecore/bin/batb save \
   --title "<イベント名>" \
   --source "https://docs.google.com/document/d/<doc_id>/edit" \
   --content-file ~/activecore/tmp/cogsworth_<doc_id>.txt \
