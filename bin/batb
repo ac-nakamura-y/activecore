@@ -198,11 +198,11 @@ reference_exists() {
 }
 
 term_category_order_sql() {
-  printf "CASE category WHEN 'client' THEN 1 WHEN 'meeting' THEN 2 WHEN 'person' THEN 3 WHEN 'project' THEN 4 WHEN 'process' THEN 5 WHEN 'team' THEN 6 WHEN 'system' THEN 7 WHEN 'term' THEN 8 ELSE 9 END"
+  printf "CASE category WHEN 'client' THEN 1 WHEN 'meeting' THEN 2 WHEN 'person' THEN 3 WHEN 'project' THEN 4 WHEN 'process' THEN 5 WHEN 'team' THEN 6 WHEN 'system' THEN 7 ELSE 8 END"
 }
 
 term_category_order_sql_t() {
-  printf "CASE t.category WHEN 'client' THEN 1 WHEN 'meeting' THEN 2 WHEN 'person' THEN 3 WHEN 'project' THEN 4 WHEN 'process' THEN 5 WHEN 'team' THEN 6 WHEN 'system' THEN 7 WHEN 'term' THEN 8 ELSE 9 END"
+  printf "CASE t.category WHEN 'client' THEN 1 WHEN 'meeting' THEN 2 WHEN 'person' THEN 3 WHEN 'project' THEN 4 WHEN 'process' THEN 5 WHEN 'team' THEN 6 WHEN 'system' THEN 7 ELSE 8 END"
 }
 
 term_category_label() {
@@ -214,7 +214,6 @@ term_category_label() {
     process) printf "業務工程" ;;
     team) printf "チーム" ;;
     system) printf "システム" ;;
-    term) printf "用語" ;;
     *) printf "%s" "$1" ;;
   esac
 }
@@ -498,7 +497,7 @@ cmd_summarize() {
 
   extracted="$(
     agent -p --model auto --output-format text \
-      "@$(abs_path "$content_file") 以下の文書を分析し、JSON オブジェクトのみを出力してください。形式は {\"summary\":\"200文字以内の日本語要約\",\"terms\":[{\"name\":\"...\",\"category\":\"client|person|project|process|team|system|meeting|term\",\"aliases\":[\"...\"],\"description\":\"...\"}]} です。summary と terms の両方を含めてください。" \
+      "@$(abs_path "$content_file") 以下の文書を分析し、JSON オブジェクトのみを出力してください。形式は {\"summary\":\"200文字以内の日本語要約\",\"terms\":[{\"name\":\"...\",\"category\":\"client|person|project|process|team|system|meeting\",\"aliases\":[\"...\"],\"description\":\"...\"}]} です。summary と terms の両方を含めてください。" \
       2>/dev/null || true
   )"
   printf '%s' "$extracted" >"$json_file"
@@ -827,6 +826,7 @@ upsert_term() {
     db "$LUMIERE" \
       "INSERT INTO terms (id, name, category, description, created_at, updated_at)
        VALUES ('$esc_id', '$esc_name', '$esc_category', '$esc_desc', '$ts', '$ts');"
+    id="$(db "$LUMIERE" "SELECT id FROM terms WHERE id = '$esc_id' LIMIT 1;")"
   else
     esc_id="$(sql_escape "$id")"
     if [[ -n "$description" ]]; then
@@ -1000,9 +1000,15 @@ cmd_term_add() {
   init_db
   local id alias
   id="$(upsert_term "$name" "$category" "$description")"
-  for alias in "${aliases[@]}"; do
-    add_term_alias "$id" "$alias"
-  done
+  if [[ -z "$id" ]]; then
+    echo "error: could not add term: $name ($category)" >&2
+    exit 1
+  fi
+  if [[ ${#aliases[@]} -gt 0 ]]; then
+    for alias in "${aliases[@]}"; do
+      add_term_alias "$id" "$alias"
+    done
+  fi
   print_term_detail "$id"
 }
 
@@ -1149,7 +1155,7 @@ cmd_term_learn() {
 
   extracted="$(
     agent -p --model auto --output-format text \
-      "@$(abs_path "$content_file") 以下の文書からクライアント名・人物名・プロジェクト名・業務工程・チーム名・システム名・会議名・固有用語を抽出してください。JSON 配列のみを出力し、各要素は {\"name\":\"...\",\"category\":\"client|person|project|process|team|system|meeting|term\",\"aliases\":[\"...\"],\"description\":\"...\"} の形式にしてください。" \
+      "@$(abs_path "$content_file") 以下の文書からクライアント名・人物名・プロジェクト名・業務工程・チーム名・システム名・会議名を抽出してください。JSON 配列のみを出力し、各要素は {\"name\":\"...\",\"category\":\"client|person|project|process|team|system|meeting\",\"aliases\":[\"...\"],\"description\":\"...\"} の形式にしてください。" \
       2>/dev/null || true
   )"
   printf '%s' "$extracted" >"$json_file"

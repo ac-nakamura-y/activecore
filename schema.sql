@@ -11,13 +11,13 @@ CREATE TABLE IF NOT EXISTS reference (
 );
 
 -- 共通語彙（terms 系テーブル）
--- category: client | meeting | person | project | process | team | system | term
+-- category: client | meeting | person | project | process | team | system
 
 CREATE TABLE IF NOT EXISTS terms (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL,
   category    TEXT NOT NULL CHECK (category IN (
-    'client', 'person', 'project', 'process', 'team', 'system', 'term', 'meeting'
+    'client', 'person', 'project', 'process', 'team', 'system', 'meeting'
   )),
   description TEXT,
   created_at  TEXT NOT NULL,
@@ -54,8 +54,7 @@ CREATE TABLE IF NOT EXISTS term_relations (
 
 -- クライアント
 INSERT OR IGNORE INTO terms (id, name, category, description, created_at, updated_at) VALUES
-  ('client-hankyu-kotsu', '阪急交通社', 'client', 'クライアント', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
-  ('client-hankyu', '阪急', 'client', 'クライアント（阪急関連）', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
+  ('client-hankyu-kotsu', '阪急交通社', 'client', 'クライアント。表記ゆれ: 阪急', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
   ('client-triples', 'トリプルエス', 'client', 'クライアント。表記ゆれ: トリプルS', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
   ('client-sabon', 'SABON', 'client', 'クライアント', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
   ('client-kinari', 'キナリ', 'client', 'クライアント', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
@@ -63,17 +62,9 @@ INSERT OR IGNORE INTO terms (id, name, category, description, created_at, update
   ('client-aeonpet', 'イオンペット', 'client', 'クライアント', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900');
 
 INSERT OR IGNORE INTO term_aliases (term_id, alias) VALUES
+  ('client-hankyu-kotsu', '阪急'),
   ('client-triples', 'トリプルS'),
-  ('client-triples', 'トリプルエスさま'),
-  ('client-triples', 'トリプルエス'),
-  ('client-hankyu', '阪急'),
-  ('client-hankyu', '阪急さま'),
-  ('client-shiseido', '資生堂'),
-  ('client-shiseido', 'エリクシール'),
-  ('client-aeonpet', 'イオンペット'),
-  ('client-aeonpet', 'イオンペットさま'),
-  ('client-kinari', 'キナリ'),
-  ('client-sabon', 'SABON');
+  ('client-shiseido', 'エリクシール');
 
 -- チーム・プロジェクト
 INSERT OR IGNORE INTO terms (id, name, category, description, created_at, updated_at) VALUES
@@ -83,25 +74,19 @@ INSERT OR IGNORE INTO terms (id, name, category, description, created_at, update
   ('team-career', 'キャリア', 'team', '評価・査定・キャリア面談', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
   ('project-poc', 'PoC型化', 'project', 'PoC の型化検討', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
   ('project-marutto', 'marutto', 'project', 'marutto 1to1 定例・制作オペレーション', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
-  ('project-nb-naramake', 'NBナラマケ', 'project', 'ナラティブマーケティング（NB 請求軸）', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
-  ('project-nb', 'NB', 'project', 'ナラティブブレイン（制作パートナー）', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900');
+  ('project-nb', 'NB', 'project', 'ナラティブブレイン（制作パートナー）。ナラマケ案件を含む', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900');
 
 INSERT OR IGNORE INTO term_aliases (term_id, alias) VALUES
-  ('team-marukeops', 'マーケOps'),
   ('team-marukeops', 'Ops'),
-  ('team-fde', 'FDE'),
-  ('team-isms', 'ISMS'),
-  ('project-marutto', 'Marutto 1to1'),
-  ('project-marutto', 'marutto1to1'),
-  ('project-nb-naramake', 'ナラマケ'),
-  ('project-nb', 'ナラティブブレイン');
+  ('project-nb', 'ナラティブブレイン'),
+  ('project-nb', 'ナラマケ');
 
 -- 会議（旧 tag_rules の定例名）
 INSERT OR IGNORE INTO terms (id, name, category, description, created_at, updated_at) VALUES
   ('meeting-fde-daily', 'FDEデイリー', 'meeting', 'FDE デイリー', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
   ('meeting-marukeops-weekly', '[マーケOps] Weekly MTG', 'meeting', 'マーケOps 週次', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
   ('meeting-1on1', '1on1', 'meeting', '1on1', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
-  ('meeting-nb-naramake', '課題確認の定例会（NBナラマケ-AC）', 'meeting', 'NBナラマケ課題確認', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
+  ('meeting-nb-naramake', '課題確認の定例会（NBナラマケ-AC）', 'meeting', 'NB 課題確認', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
   ('meeting-ops-cost', 'Opsコスト削減に向けた議論', 'meeting', 'Ops コスト削減議論', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
   ('meeting-fde-kai', 'FDE会', 'meeting', 'FDE会', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
   ('meeting-isms', '情報セキュリティ委員会', 'meeting', 'ISMS 委員会', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
@@ -127,7 +112,7 @@ INSERT OR IGNORE INTO term_relations (from_id, to_id, relation) VALUES
   ('meeting-fde-daily', 'team-fde', 'part_of'),
   ('meeting-marukeops-weekly', 'team-marukeops', 'part_of'),
   ('meeting-1on1', 'team-fde', 'part_of'),
-  ('meeting-nb-naramake', 'project-nb-naramake', 'part_of'),
+  ('meeting-nb-naramake', 'project-nb', 'part_of'),
   ('meeting-ops-cost', 'team-marukeops', 'part_of'),
   ('meeting-fde-kai', 'team-fde', 'part_of'),
   ('meeting-isms', 'team-isms', 'part_of'),
@@ -145,7 +130,7 @@ INSERT OR IGNORE INTO term_relations (from_id, to_id, relation) VALUES
   ('meeting-aeonpet-1to1', 'client-aeonpet', 'part_of'),
   ('meeting-sabon-1to1', 'client-sabon', 'part_of'),
   ('meeting-sabon-internal', 'client-sabon', 'part_of'),
-  ('meeting-hankyu-teirei', 'client-hankyu', 'part_of'),
+  ('meeting-hankyu-teirei', 'client-hankyu-kotsu', 'part_of'),
   ('meeting-triples-teirei', 'client-triples', 'part_of');
 
 -- 業務工程
@@ -207,22 +192,3 @@ INSERT OR IGNORE INTO term_relations (from_id, to_id, relation) VALUES
   ('proc-task-mgmt', 'system-backlog', 'uses'),
   ('proc-html-review', 'system-html-review-ag', 'uses');
 
--- 固有用語
-INSERT OR IGNORE INTO terms (id, name, category, description, created_at, updated_at) VALUES
-  ('term-as-is', 'AS-IS', 'term', '現状の業務フロー・請求構造', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
-  ('term-to-be', 'TO-BE', 'term', '目標の業務フロー・請求構造', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
-  ('term-lv0', 'L0', 'term', 'エージェント化 Lv0', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
-  ('term-lv1', 'L1', 'term', 'エージェント化 Lv1', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
-  ('term-lv2', 'L2', 'term', 'エージェント化 Lv2', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
-  ('term-lv3', 'L3', 'term', 'エージェント化 Lv3', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
-  ('term-lv4', 'L4', 'term', 'エージェント化 Lv4', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
-  ('term-agent-lv', 'エージェント化レベル', 'term', 'NB 請求構造に対応する自動化段階', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
-  ('term-cogsworth', 'Cogsworth', 'term', 'Gemini 議事録同期', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
-  ('term-lumiere', 'Lumiere', 'term', '会議・資料の索引 DB（reference + 共通語彙）', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900');
-
-INSERT OR IGNORE INTO term_aliases (term_id, alias) VALUES
-  ('term-lv0', 'Lv0'),
-  ('term-lv1', 'Lv1'),
-  ('term-lv2', 'Lv2'),
-  ('term-lv3', 'Lv3'),
-  ('term-lv4', 'Lv4');

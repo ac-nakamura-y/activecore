@@ -32,7 +32,7 @@ erDiagram
 
 ### Vocabulary layer
 
-共通語彙の正本は `terms` である。マスタデータは `schema.sql` が担う。category は次の 8 種類に限定する。
+共通語彙の正本は `terms` である。マスタデータは `schema.sql` が担う。category は次の 7 種類に限定する。
 
 | category | examples |
 | :-- | :-- |
@@ -43,9 +43,10 @@ erDiagram
 | `process` | HTML制作、修正対応 |
 | `team` | マーケOps、FDE |
 | `system` | build-html-tool、Backlog、KARTE |
-| `term` | AS-IS、L0、Lumiere |
 
-`term_aliases` は別名とタイトルマッチ用パターンをまとめたテーブルである。`save` 時の自動推定と `term infer` は、タイトルや本文に `name` または `alias` が含まれるかで用語を拾う。
+`term_aliases` は別名とタイトルマッチ用パターンをまとめたテーブルである。`save` 時の自動推定と `term infer` は、タイトルや本文に `name` または `alias` が含まれるかを大文字小文字の別なく調べて用語を拾う。
+
+`name` を含む別名は登録しない。`name` が一致する場所では別名も必ず一致するため、区別に寄与しない。`阪急交通社` に対する `阪急` のように、`name` より短い表記だけを別名にする。
 
 `reference_terms` は資料と用語の多対多リンクである。
 

@@ -11,7 +11,7 @@ Lumiere のスキーマと CLI の詳細は [docs/lumiere.md](./docs/lumiere.md)
 | table | role |
 | :-- | :-- |
 | `reference` | 資料の索引・本文キャッシュ |
-| `terms` | 共通語彙（client / meeting / person / project / process / team / system / term） |
+| `terms` | 共通語彙（client / meeting / person / project / process / team / system） |
 | `term_aliases` | 別名・タイトルマッチ用パターン |
 | `reference_terms` | 資料と用語の紐付け |
 | `term_relations` | 用語間の関係（works_for, part_of, uses など） |
