@@ -806,9 +806,17 @@ cmd_reference() {
   esac
 }
 
+# 学習経路（parse_agent_json の slug）と同じ id を作る。
 term_slug() {
-  local category="$1" name="$2"
-  printf '%s-%s' "$category" "$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/_/g' | sed 's/_\+/_/g' | sed 's/^_\|_$//g')"
+  require_cmd python3
+  python3 -c '
+import sys
+category, name = sys.argv[1], sys.argv[2]
+s = "".join(ch if ch.isalnum() else "_" for ch in name.lower())
+while "__" in s:
+    s = s.replace("__", "_")
+sys.stdout.write(category + "-" + s.strip("_"))
+' "$1" "$2"
 }
 
 upsert_term() {
@@ -1073,23 +1081,27 @@ def slug(category, name):
         s = s.replace("__", "_")
     return f"{category}-{s.strip('_')}"
 
+def resolve(name):
+    """既存の用語は name か alias で引き当てる。category は当てにしない。"""
+    row = conn.execute(
+        "SELECT t.id FROM terms t LEFT JOIN term_aliases a ON a.term_id = t.id"
+        " WHERE t.name = ? OR a.alias = ? LIMIT 1",
+        (name, name),
+    ).fetchone()
+    return row[0] if row else None
+
 term_ids = []
 for item in items:
     if not isinstance(item, dict):
         continue
     name = (item.get("name") or "").strip()
     category = (item.get("category") or "").strip()
-    if category == "tool":
-        category = "system"
     if not name or not category:
         continue
     desc = (item.get("description") or "").strip()
-    row = conn.execute(
-        "SELECT id FROM terms WHERE name = ? AND category = ?",
-        (name, category),
-    ).fetchone()
-    if row:
-        term_id = row[0]
+
+    term_id = resolve(name)
+    if term_id:
         if desc:
             conn.execute(
                 "UPDATE terms SET description = ?, updated_at = ? WHERE id = ?",
@@ -1097,18 +1109,29 @@ for item in items:
             )
     else:
         term_id = slug(category, name)
-        conn.execute(
-            "INSERT OR IGNORE INTO terms (id, name, category, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (term_id, name, category, desc or None, now, now),
-        )
+        try:
+            conn.execute(
+                "INSERT INTO terms (id, name, category, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (term_id, name, category, desc or None, now, now),
+            )
+        except sqlite3.IntegrityError as exc:
+            print(f"warn: skipped term {name} ({category}): {exc}", file=sys.stderr)
+            continue
     term_ids.append(term_id)
+
+    # name や既存 alias を含む別名は、一致する場所が同じなので登録しない。
+    term_name = conn.execute("SELECT name FROM terms WHERE id = ?", (term_id,)).fetchone()[0]
+    known = {a for (a,) in conn.execute("SELECT alias FROM term_aliases WHERE term_id = ?", (term_id,))}
+    known.add(term_name)
     for alias in item.get("aliases") or []:
         alias = str(alias).strip()
-        if alias:
-            conn.execute(
-                "INSERT OR IGNORE INTO term_aliases (term_id, alias) VALUES (?, ?)",
-                (term_id, alias),
-            )
+        if not alias or any(k.lower() in alias.lower() for k in known):
+            continue
+        conn.execute(
+            "INSERT OR IGNORE INTO term_aliases (term_id, alias) VALUES (?, ?)",
+            (term_id, alias),
+        )
+        known.add(alias)
 
 if reference_id:
     for term_id in term_ids:
