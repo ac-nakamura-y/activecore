@@ -1,0 +1,133 @@
+# Lumiere
+
+## Overview
+
+Lumiere は activecore のローカル DB で、ファイルは `db/lumiere.sqlite` に置く。Backlog の課題 URL や Google Doc の URL など、`source` が正本で、Lumiere は索引と本文キャッシュを担う。資料本体は `reference` テーブル、クライアント名・会議名・人名などの共通語彙は `terms` ほかのテーブルで管理する。詳細な手順は [CLAUDE.md](../CLAUDE.md) を参照する。
+
+## Schema
+
+Lumiere は資料レイヤと共通語彙レイヤの 2 層で構成する。資料は `reference` に集約し、用語は `terms` 系テーブルに集約する。資料と用語の対応は `reference_terms` が結ぶ。
+
+```mermaid
+erDiagram
+  reference ||--o{ reference_terms : link
+  terms ||--o{ reference_terms : link
+  terms ||--o{ term_aliases : alias
+  terms ||--o{ term_relations : from
+  terms ||--o{ term_relations : to
+```
+
+### Reference layer
+
+`reference` は会議議事録・課題・ドキュメントのキャッシュを 1 行で表す。`source` は重複登録を防ぐ一意キーである。
+
+| column | description |
+| :-- | :-- |
+| `id` | UUID |
+| `title` | 会議名・課題名など |
+| `summary` | 要約（ `summarize` ジョブが生成） |
+| `content` | 本文キャッシュ |
+| `source` | 正本の URL またはパス |
+| `created_at` / `updated_at` | 登録・更新日時 |
+
+### Vocabulary layer
+
+共通語彙の正本は `terms` である。マスタデータは `schema.sql` が担う。category は次の 8 種類に限定する。
+
+| category | examples |
+| :-- | :-- |
+| `client` | トリプルエス、SABON |
+| `meeting` | 確定：トリプルエスさま定例、FDEデイリー |
+| `person` | 永田、小松 |
+| `project` | marutto、NBナラマケ |
+| `process` | HTML制作、修正対応 |
+| `team` | マーケOps、FDE |
+| `system` | build-html-tool、Backlog、KARTE |
+| `term` | AS-IS、L0、Lumiere |
+
+`term_aliases` は別名とタイトルマッチ用パターンをまとめたテーブルである。`save` 時の自動推定と `term infer` は、タイトルや本文に `name` または `alias` が含まれるかで用語を拾う。
+
+`reference_terms` は資料と用語の多対多リンクである。
+
+`term_relations` は用語間の関係を表す。
+
+| relation | meaning |
+| :-- | :-- |
+| `works_for` | 人物がプロジェクトに所属 |
+| `part_of` | 会議がクライアントに紐づく、人物が工程を担当する、など |
+| `uses` | 工程がシステムを利用 |
+| `member_of` | メンバー関係（将来用） |
+| `alias_of` | 別名関係（将来用） |
+
+## CLI
+
+CLI のサブコマンド名は英語のままだが、ドキュメント上は「共通語彙」と呼ぶ。`term` は共通語彙を操作するサブコマンド群である。
+
+### Reference commands
+
+資料の保存・取得・検索に使う。
+
+| command | role |
+| :-- | :-- |
+| `save --title ... --source ... --content-file ...` | 保存（同一 `source` は upsert） |
+| `save ... [--term NAME ...] [--require-term]` | 用語を手動指定、または title から自動推定 |
+| `get ID` | 本文取得 |
+| `query [KEYWORD ...]` | 全文検索 |
+| `query --term NAME ...` | 用語で絞り込み |
+| `list` | `query` の alias |
+
+### Reference-link commands
+
+資料に付いた用語を手で直すときに使う。
+
+| command | role |
+| :-- | :-- |
+| `reference link list ID` | 紐付き用語の一覧 |
+| `reference link add ID --term NAME ...` | 用語を追加 |
+| `reference link remove ID --term NAME ...` | 用語を削除 |
+| `reference link set ID --term NAME ...` | 用語を置換 |
+
+### Vocabulary commands
+
+共通語彙の参照・追加・学習に使う。いずれも `activecore term` で始まる。
+
+| command | role |
+| :-- | :-- |
+| `term list [--category CAT]` | 用語一覧 |
+| `term query KEYWORD ...` | 用語検索（1 語の完全一致なら詳細表示） |
+| `term infer TEXT ...` | テキストから用語を推定 |
+| `term add --name ... --category ...` | 用語を手動追加 |
+| `term learn ID` | 資料本文から用語を抽出（手動・バッチ用） |
+
+## Workflows
+
+検索では、まずタイトルや文面から拾える用語を確認し、その用語で資料を絞り込む。
+
+```bash
+activecore term infer "確定：トリプルエスさま定例"
+activecore term query トリプルエス
+activecore query --term トリプルエス
+activecore get <id>
+```
+
+保存では、title から用語を自動推定できる場合は `--term` を省略できる。推定できない場合は `--require-term` 付きで save を止め、用語を確認してから `--term` を付ける。
+
+```bash
+activecore save --title "..." --source "..." --content-file /tmp/body.md --require-term
+activecore save ... --term トリプルエス --term FDE
+```
+
+`save` の直後、バックグラウンドで要約ジョブ（ `summarize` ）が走る。1 回の agent 呼び出しで要約テキストと共通語彙の更新をまとめて行う。本文からの語彙抽出は `term learn` を手動で実行する。
+
+## Migration
+
+既存 DB は初回起動時に次の変換を自動で行う。
+
+| before | after |
+| :-- | :-- |
+| `db/refs.sqlite` | `db/lumiere.sqlite`（ファイル名の rename） |
+| テーブル `refs` | `reference` |
+| `tags` / `ref_tags` / `tag_rules` | `terms` / `reference_terms` / `term_aliases` |
+| category `tool` | `system` |
+
+変換は 1 回の実行で完結し、旧テーブルは変換後に削除する。変換中にエラーが起きた場合は 1 件も書き換えずに中断する。

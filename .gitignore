@@ -1,6 +1,8 @@
 .DS_Store
 db/refs.sqlite
 db/refs.sqlite-*
+db/lumiere.sqlite
+db/lumiere.sqlite-*
 tmp/*
 !tmp/.gitkeep
 .playwright-cli/
