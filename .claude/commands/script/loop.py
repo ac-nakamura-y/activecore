@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, time as dt_time
 from zoneinfo import ZoneInfo
 
 TZ = ZoneInfo("Asia/Tokyo")
-TICK = 'AGENT_LOOP_TICK_COGSWORTH {"prompt":"CLAUDE.md の Cogsworth > 同期 手順を実行。"}'
+TICK = 'AGENT_LOOP_TICK_COGSWORTH {"prompt":".claude/commands/cogsworth.md の Sync procedure を実行。"}'
 
 START_HOUR = int(os.environ.get("COGSWORTH_START_HOUR", 10))
 END_HOUR = int(os.environ.get("COGSWORTH_END_HOUR", 19))

@@ -4,7 +4,7 @@
 
 activecore は会議・チャット・ドキュメントの文脈を Agent に渡すためのワークスペースである。SQLite の Lumiere（ `db/lumiere.sqlite` ）に資料をキャッシュし、共通語彙で検索と分類をそろえる。資料の正本は常に `source` 側（Backlog URL、Google Doc URL など）にあり、Lumiere は索引とローカルコピーを保持する。
 
-Lumiere のスキーマと CLI の詳細は [docs/lumiere.md](./docs/lumiere.md) にまとめている。
+Lumiere のスキーマと CLI の詳細は [docs/lumiere.md](./docs/lumiere.md)、議事録の自動取り込みは [docs/cogsworth.md](./docs/cogsworth.md) にまとめている。
 
 `reference` テーブルが資料の索引兼キャッシュである。`query` で絞り込み、`get` で本文まで取る。`content` が空のときは `source` から取り直して `save` する。用語の正本は `terms` テーブル群（共通語彙）で、save 時に title から自動推定する。`summary` が `(生成中)` のときは要約ジョブが動いている。同一 `source` への再 `save` は upsert される。
 
@@ -22,6 +22,7 @@ Lumiere のスキーマと CLI の詳細は [docs/lumiere.md](./docs/lumiere.md)
 activecore/
   CLAUDE.md
   docs/lumiere.md
+  docs/cogsworth.md
   schema.sql
   bin/activecore
   .claude/commands/cogsworth.md
@@ -98,29 +99,6 @@ Agent はメタデータ登録・本文キャッシュ・用語付与・要約�
 
 ## Cogsworth
 
-Cogsworth は、終了済みカレンダーイベントに添付された Gemini 議事録を `reference` に登録する仕組みである。同期手順の正本は `.claude/commands/cogsworth.md` である。定期実行はバックグランドシェルが `AGENT_LOOP_TICK_COGSWORTH` を出力し、tick ごとに Agent が同期する。
+Cogsworth は、終了したカレンダー予定に添付された Gemini 議事録を `reference` に登録する仕組みである。仕組みと運用は [docs/cogsworth.md](./docs/cogsworth.md)、Agent が実行する手順は `.claude/commands/cogsworth.md` にまとめている。
 
-### Sync steps
-
-tick を受け取ったら、未登録分だけ save する。
-
-| step | action |
-| :-- | :-- |
-| 対象 | Calendar `list_events`（ `y.nakamura@activecore.jp` 、過去 7 日、終了 30 分以上前） |
-| フィルタ | 添付 `title` が `Gemini によるメモ` の doc ID |
-| 登録 | Drive `read_file_content` → `tmp/cogsworth_<doc_id>.txt` → `save --content-file ... --require-term` |
-
-`--title` にイベント名を渡すと用語は自動推定される。推定できない場合だけ `term infer` で確認し、`--term` を付ける。
-
-### Operations
-
-`/cogsworth` または `/cogsworth on` でバックグランドループを起動し、直後に同期を 1 回実行する。その後は平日、各時 15 分・45 分（ `Asia/Tokyo` 、既定は 10 時〜19 時）に tick が出て、同期手順が繰り返される。`/cogsworth off` でループを停止する。
-
-```mermaid
-flowchart LR
-  enable["/cogsworth"] --> loop["バックグランド"]
-  loop --> tick["tick"]
-  tick --> sync["同期"]
-  sync --> loop
-  disable["/cogsworth off"] --> stop["停止"]
-```
+`/cogsworth` でバックグランドループを起動し、`/cogsworth off` で停止する。合図（ `AGENT_LOOP_TICK_COGSWORTH` ）を受け取ったら、未登録の議事録だけを `save --require-term` で登録し、新規件数を短く報告する。用語を推定できない場合は推測せず、`term infer` の結果をユーザーに確認する。

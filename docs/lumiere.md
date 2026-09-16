@@ -10,11 +10,11 @@ Lumiere は資料レイヤと共通語彙レイヤの 2 層で構成する。資
 
 ```mermaid
 erDiagram
-  reference ||--o{ reference_terms : link
-  terms ||--o{ reference_terms : link
-  terms ||--o{ term_aliases : alias
-  terms ||--o{ term_relations : from
-  terms ||--o{ term_relations : to
+  reference ||--o{ reference_terms : "紐付け"
+  terms ||--o{ reference_terms : "紐付け"
+  terms ||--o{ term_aliases : "別名"
+  terms ||--o{ term_relations : "関係元"
+  terms ||--o{ term_relations : "関係先"
 ```
 
 ### Reference layer
