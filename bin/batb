@@ -22,6 +22,8 @@ usage:
   batb term query [KEYWORD ...]
   batb term infer TEXT...
   batb term add --name NAME --category CAT [--description DESC] [--alias ALIAS ...]
+  batb term merge SRC --into DST
+  batb term remove NAME
   batb term learn ID
 
 examples:
@@ -497,7 +499,7 @@ cmd_summarize() {
 
   extracted="$(
     agent -p --model auto --output-format text \
-      "@$(abs_path "$content_file") 以下の文書を分析し、JSON オブジェクトのみを出力してください。形式は {\"summary\":\"200文字以内の日本語要約\",\"terms\":[{\"name\":\"...\",\"category\":\"client|person|project|process|team|system|meeting\",\"aliases\":[\"...\"],\"description\":\"...\"}]} です。summary と terms の両方を含めてください。" \
+      "@$(abs_path "$content_file") 以下の文書を分析し、JSON オブジェクトのみを出力してください。形式は {\"summary\":\"200文字以内の日本語要約\",\"terms\":[{\"name\":\"...\",\"category\":\"client|person|project|process|team|system|meeting\",\"aliases\":[\"...\"],\"description\":\"...\"}],\"relations\":[{\"from\":\"...\",\"to\":\"...\",\"relation\":\"works_for|part_of|uses\"}]} です。summary と terms は必ず含め、文書から読み取れる関係があれば relations にも入れてください。関係は works_for（人物→プロジェクト）、part_of（会議→クライアント、人物→業務工程）、uses（業務工程→システム）の 3 種類のみとし、from と to には terms に挙げた name を書いてください。" \
       2>/dev/null || true
   )"
   printf '%s' "$extracted" >"$json_file"
@@ -827,7 +829,7 @@ upsert_term() {
   esc_category="$(sql_escape "$category")"
   esc_desc="$(sql_escape "$description")"
 
-  id="$(db "$LUMIERE" "SELECT id FROM terms WHERE name = '$esc_name' AND category = '$esc_category' LIMIT 1;")"
+  id="$(resolve_term_id "$name")"
   if [[ -z "$id" ]]; then
     id="$(term_slug "$category" "$name")"
     esc_id="$(sql_escape "$id")"
@@ -882,6 +884,17 @@ print_term_detail() {
       "SELECT r.relation, t.name, t.category
        FROM term_relations r JOIN terms t ON t.id = r.to_id
        WHERE r.from_id = '$esc'
+       ORDER BY t.category, t.name;"
+  )
+
+  while IFS='|' read -r rel_label rel_name rel_cat; do
+    [[ -z "${rel_label:-}" ]] && continue
+    printf -- "- %s <- %s (%s)\n" "$rel_label" "$rel_name" "$(term_category_label "$rel_cat")"
+  done < <(
+    db -separator '|' "$LUMIERE" \
+      "SELECT r.relation, t.name, t.category
+       FROM term_relations r JOIN terms t ON t.id = r.from_id
+       WHERE r.to_id = '$esc'
        ORDER BY t.category, t.name;"
   )
   printf "\n"
@@ -1053,9 +1066,11 @@ if data is None:
 
 summary = None
 items = []
+relations = []
 if isinstance(data, dict):
     summary = (data.get("summary") or "").strip()
     items = data.get("terms") or []
+    relations = data.get("relations") or []
 elif isinstance(data, list):
     items = data
 
@@ -1133,6 +1148,40 @@ for item in items:
         )
         known.add(alias)
 
+# 関係は用語を作り終えてから読む。同じ応答で現れた用語も端点にできる。
+RELATIONS = ("works_for", "part_of", "uses")
+for item in relations:
+    if not isinstance(item, dict):
+        continue
+    relation = (item.get("relation") or "").strip()
+    from_name = (item.get("from") or "").strip()
+    to_name = (item.get("to") or "").strip()
+    if not relation or not from_name or not to_name:
+        continue
+    if relation not in RELATIONS:
+        print(f"warn: skipped relation {from_name} -{relation}-> {to_name}: unknown relation", file=sys.stderr)
+        continue
+    from_id = resolve(from_name)
+    to_id = resolve(to_name)
+    if not from_id or not to_id:
+        missing = from_name if not from_id else to_name
+        print(f"warn: skipped relation {from_name} -{relation}-> {to_name}: unknown term {missing}", file=sys.stderr)
+        continue
+    if from_id == to_id:
+        continue
+    if conn.execute(
+        "SELECT 1 FROM term_relations WHERE from_id = ? AND to_id = ? AND relation = ?",
+        (from_id, to_id, relation),
+    ).fetchone():
+        continue
+    try:
+        conn.execute(
+            "INSERT INTO term_relations (from_id, to_id, relation) VALUES (?, ?, ?)",
+            (from_id, to_id, relation),
+        )
+    except sqlite3.IntegrityError as exc:
+        print(f"warn: skipped relation {from_name} -{relation}-> {to_name}: {exc}", file=sys.stderr)
+
 if reference_id:
     for term_id in term_ids:
         conn.execute(
@@ -1142,6 +1191,127 @@ if reference_id:
 
 conn.commit()
 PY
+}
+
+# 紐付け・関係・別名を DST へ移し、SRC を削除する。1 トランザクションで行う。
+merge_terms() {
+  require_cmd python3
+  python3 - "$LUMIERE" "$1" "$2" <<'PY'
+import sqlite3, sys
+
+db_path, src_id, dst_id = sys.argv[1:4]
+conn = sqlite3.connect(db_path, timeout=5)
+
+dst_name = conn.execute("SELECT name FROM terms WHERE id = ?", (dst_id,)).fetchone()[0]
+src_name = conn.execute("SELECT name FROM terms WHERE id = ?", (src_id,)).fetchone()[0]
+known = {a for (a,) in conn.execute("SELECT alias FROM term_aliases WHERE term_id = ?", (dst_id,))}
+known.add(dst_name)
+src_aliases = [a for (a,) in conn.execute("SELECT alias FROM term_aliases WHERE term_id = ?", (src_id,))]
+
+# 用語名や既存別名を含む別名は、一致する場所が同じなので移さない。
+for alias in src_aliases + [src_name]:
+    if any(k.lower() in alias.lower() for k in known):
+        continue
+    conn.execute("INSERT OR IGNORE INTO term_aliases (term_id, alias) VALUES (?, ?)", (dst_id, alias))
+    known.add(alias)
+conn.execute("DELETE FROM term_aliases WHERE term_id = ?", (src_id,))
+
+conn.execute("INSERT OR IGNORE INTO reference_terms (reference_id, term_id)"
+             " SELECT reference_id, ? FROM reference_terms WHERE term_id = ?", (dst_id, src_id))
+conn.execute("DELETE FROM reference_terms WHERE term_id = ?", (src_id,))
+
+conn.execute("INSERT OR IGNORE INTO term_relations (from_id, to_id, relation)"
+             " SELECT ?, to_id, relation FROM term_relations WHERE from_id = ?", (dst_id, src_id))
+conn.execute("INSERT OR IGNORE INTO term_relations (from_id, to_id, relation)"
+             " SELECT from_id, ?, relation FROM term_relations WHERE to_id = ?", (dst_id, src_id))
+conn.execute("DELETE FROM term_relations WHERE from_id = ? OR to_id = ?", (src_id, src_id))
+conn.execute("DELETE FROM term_relations WHERE from_id = to_id")
+
+conn.execute("DELETE FROM terms WHERE id = ?", (src_id,))
+conn.commit()
+PY
+}
+
+cmd_term_merge() {
+  local src="" dst=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --into)
+        dst="$2"
+        shift 2
+        ;;
+      --*)
+        echo "error: unknown argument: $1" >&2
+        exit 1
+        ;;
+      *)
+        if [[ -n "$src" ]]; then
+          echo "error: unexpected argument: $1" >&2
+          exit 1
+        fi
+        src="$1"
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$src" || -z "$dst" ]]; then
+    echo "error: merge requires SRC and --into DST" >&2
+    exit 1
+  fi
+
+  init_db
+  local src_id dst_id
+  src_id="$(resolve_term_id "$src")"
+  dst_id="$(resolve_term_id "$dst")"
+  if [[ -z "$src_id" ]]; then
+    echo "error: unknown term: $src" >&2
+    exit 1
+  fi
+  if [[ -z "$dst_id" ]]; then
+    echo "error: unknown term: $dst" >&2
+    exit 1
+  fi
+  if [[ "$src_id" == "$dst_id" ]]; then
+    echo "error: $src and $dst are the same term" >&2
+    exit 1
+  fi
+
+  merge_terms "$src_id" "$dst_id"
+  print_term_detail "$dst_id"
+}
+
+cmd_term_remove() {
+  if [[ $# -ne 1 ]]; then
+    echo "error: remove requires exactly one term name" >&2
+    exit 1
+  fi
+
+  init_db
+  local id esc linked
+  id="$(resolve_term_id "$1")"
+  if [[ -z "$id" ]]; then
+    echo "error: unknown term: $1" >&2
+    exit 1
+  fi
+  esc="$(sql_escape "$id")"
+
+  linked="$(db "$LUMIERE" "SELECT count(*) FROM reference_terms WHERE term_id = '$esc';")"
+  if [[ "$linked" != "0" ]]; then
+    echo "error: $1 is linked to $linked references" >&2
+    echo "hint: batb term merge $1 --into OTHER" >&2
+    exit 1
+  fi
+
+  db -bail "$LUMIERE" <<SQL
+BEGIN;
+DELETE FROM term_aliases WHERE term_id = '$esc';
+DELETE FROM term_relations WHERE from_id = '$esc' OR to_id = '$esc';
+DELETE FROM terms WHERE id = '$esc';
+COMMIT;
+SQL
+
+  echo "removed: $1"
 }
 
 cmd_term_learn() {
@@ -1178,7 +1348,7 @@ cmd_term_learn() {
 
   extracted="$(
     agent -p --model auto --output-format text \
-      "@$(abs_path "$content_file") 以下の文書からクライアント名・人物名・プロジェクト名・業務工程・チーム名・システム名・会議名を抽出してください。JSON 配列のみを出力し、各要素は {\"name\":\"...\",\"category\":\"client|person|project|process|team|system|meeting\",\"aliases\":[\"...\"],\"description\":\"...\"} の形式にしてください。" \
+      "@$(abs_path "$content_file") 以下の文書からクライアント名・人物名・プロジェクト名・業務工程・チーム名・システム名・会議名と、それらの関係を抽出してください。JSON オブジェクトのみを出力し、形式は {\"terms\":[{\"name\":\"...\",\"category\":\"client|person|project|process|team|system|meeting\",\"aliases\":[\"...\"],\"description\":\"...\"}],\"relations\":[{\"from\":\"...\",\"to\":\"...\",\"relation\":\"works_for|part_of|uses\"}]} にしてください。関係は works_for（人物→プロジェクト）、part_of（会議→クライアント、人物→業務工程）、uses（業務工程→システム）の 3 種類のみとし、from と to には terms に挙げた name を書いてください。" \
       2>/dev/null || true
   )"
   printf '%s' "$extracted" >"$json_file"
@@ -1192,7 +1362,7 @@ cmd_term_learn() {
 
 cmd_term() {
   if [[ $# -lt 1 ]]; then
-    echo "error: term subcommand required (list|query|infer|add|learn)" >&2
+    echo "error: term subcommand required (list|query|infer|add|merge|remove|learn)" >&2
     exit 1
   fi
   local sub="$1"
@@ -1210,12 +1380,14 @@ cmd_term() {
     add)
       cmd_term_add "$@"
       ;;
+    merge)
+      cmd_term_merge "$@"
+      ;;
+    remove)
+      cmd_term_remove "$@"
+      ;;
     learn)
       cmd_term_learn "$@"
-      ;;
-    show)
-      echo "warn: term show is removed; use term query NAME" >&2
-      cmd_term_query "$@"
       ;;
     *)
       echo "error: unknown term subcommand: $sub" >&2

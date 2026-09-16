@@ -16,7 +16,7 @@ Lumiere のスキーマと CLI の詳細は [docs/lumiere.md](./docs/lumiere.md)
 | `reference_terms` | 資料と用語の紐付け |
 | `term_relations` | 用語間の関係（works_for, part_of, uses など） |
 
-`save` の直後、バックグラウンドで要約ジョブ（ `summarize` ）が走る。1 回の agent 呼び出しで要約と共通語彙の更新をまとめて行う。本文からの語彙抽出は `term learn` を手動で実行する。
+`save` の直後、バックグラウンドで要約ジョブ（ `summarize` ）が走る。1 回の agent 呼び出しで、要約と、用語・別名・用語間の関係の登録をまとめて行う。既存の用語は名前と別名で引き当てるため、`阪急` のような別名が新しい用語として増えることはない。本文からの語彙抽出だけを行いたいときは `term learn` を手動で実行する。
 
 ```
 batb/
@@ -44,6 +44,8 @@ batb/
 | 用語一覧 | `batb term list [--category CAT]` |
 | 用語詳細 | `batb term query NAME`（完全一致で詳細表示） |
 | 用語追加 | `batb term add --name N --category CAT [--alias A ...]` |
+| 用語統合 | `batb term merge SRC --into DST`（別名・紐付け・関係を移す） |
+| 用語削除 | `batb term remove NAME`（資料が紐付いていれば拒否する） |
 | 語彙学習 | `batb term learn ID`（手動・バッチ用） |
 | 資料の用語 | `batb reference link list|add|remove|set ID --term NAME ...` |
 
