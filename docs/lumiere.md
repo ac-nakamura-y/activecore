@@ -25,7 +25,6 @@ erDiagram
 | :-- | :-- |
 | `id` | UUID |
 | `title` | 会議名・課題名など |
-| `summary` | 要約（ `summarize` ジョブが生成） |
 | `content` | 本文キャッシュ |
 | `source` | 正本の URL またはパス |
 | `created_at` / `updated_at` | 登録・更新日時 |
@@ -100,7 +99,7 @@ CLI のサブコマンド名は英語のままだが、ドキュメント上は�
 | `term add --name ... --category ...` | 用語を手動追加 |
 | `term merge SRC --into DST` | 用語を統合 |
 | `term remove NAME` | 用語を削除 |
-| `term learn ID` | 資料本文から用語と関係を抽出（手動・バッチ用） |
+| `term learn ID` | 資料本文から用語と関係を抽出（`save` が自動で起動する） |
 
 ## Workflows
 
@@ -120,15 +119,15 @@ batb save --title "..." --source "..." --content-file /tmp/body.md --require-ter
 batb save ... --term トリプルエス --term FDE
 ```
 
-`save` の直後、バックグラウンドで要約ジョブ（ `summarize` ）が走る。1 回の agent 呼び出しで、要約テキストと、用語・別名・用語間の関係をまとめて登録する。
+`save` の直後、バックグラウンドで語彙ジョブ（ `term learn` ）が走り、本文から用語・別名・用語間の関係を登録する。`save` は登録を待たずに ID を返す。
 
 ## Growth
 
 共通語彙は保存のたびに育つ。`schema.sql` は初期構築の種であり、DB ができたあとの正本は `terms` 系テーブルである。既存 DB に対して `schema.sql` を編集しても反映されない。
 
-育て方は自動と手動の 2 つがある。自動は要約ジョブで、資料の本文から用語・別名・関係を抽出して登録する。手動は `term add` `term merge` `term remove` で、語彙の重複や粒度を人が整える。
+育て方は自動と手動の 2 つがある。自動は語彙ジョブで、資料の本文から用語・別名・関係を抽出して登録する。手動は `term add` `term merge` `term remove` で、語彙の重複や粒度を人が整える。
 
-要約ジョブは次の規則で語彙を壊さないようにしている。
+語彙ジョブは次の規則で語彙を壊さないようにしている。
 
 | 規則 | 内容 |
 | :-- | :-- |
@@ -147,6 +146,7 @@ batb save ... --term トリプルエス --term FDE
 | :-- | :-- |
 | `db/refs.sqlite` | `db/lumiere.sqlite`（ファイル名の rename） |
 | テーブル `refs` | `reference` |
+| 列 `summary` | 削除 |
 | `tags` / `ref_tags` / `tag_rules` | `terms` / `reference_terms` / `term_aliases` |
 | category `tool` | `system` |
 

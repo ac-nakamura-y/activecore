@@ -11,7 +11,6 @@ usage() {
   cat <<EOF
 usage:
   batb save  --title TITLE --source SOURCE --content-file PATH [--term NAME ...] [--require-term]
-  batb summarize ID --content-file PATH
   batb get ID
   batb query|list [--limit N] [--term NAME ...] [KEYWORD ...]
   batb reference link list ID
@@ -89,12 +88,21 @@ table_exists() {
   [[ -n "$found" ]]
 }
 
+column_exists() {
+  local found
+  found="$(db "$LUMIERE" "SELECT 1 FROM pragma_table_info('$1') WHERE name = '$2' LIMIT 1;")"
+  [[ -n "$found" ]]
+}
+
 schema_is_current() {
   local found
   found="$(db "$LUMIERE" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN
     ('reference', 'terms', 'term_aliases', 'reference_terms', 'term_relations',
      'refs', 'tags', 'tag_rules', 'ref_tags', 'term_sources');")"
-  [[ "$found" == "5" ]]
+  if [[ "$found" != "5" ]]; then
+    return 1
+  fi
+  ! column_exists reference summary
 }
 
 rename_legacy_file() {
@@ -165,6 +173,10 @@ init_db() {
 
   if table_exists term_sources; then
     db "$LUMIERE" "DROP TABLE term_sources;"
+  fi
+
+  if column_exists reference summary; then
+    db "$LUMIERE" "ALTER TABLE reference DROP COLUMN summary;"
   fi
 }
 
@@ -423,12 +435,12 @@ cmd_save() {
   if [[ -n "$id" ]]; then
     esc_id="$(sql_escape "$id")"
     db "$LUMIERE" \
-      "UPDATE reference SET title = '$esc_title', summary = NULL, content = readfile('$esc_path'), source = '$esc_source', updated_at = '$ts' WHERE id = '$esc_id';"
+      "UPDATE reference SET title = '$esc_title', content = readfile('$esc_path'), source = '$esc_source', updated_at = '$ts' WHERE id = '$esc_id';"
   else
     require_cmd uuidgen
     id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
     db "$LUMIERE" \
-      "INSERT INTO reference (id, title, summary, content, source, created_at, updated_at) VALUES ('$id', '$esc_title', NULL, readfile('$esc_path'), '$esc_source', '$ts', '$ts');"
+      "INSERT INTO reference (id, title, content, source, created_at, updated_at) VALUES ('$id', '$esc_title', readfile('$esc_path'), '$esc_source', '$ts', '$ts');"
   fi
 
   if [[ ${#terms[@]} -gt 0 ]]; then
@@ -439,78 +451,11 @@ cmd_save() {
     link_reference_term_ids "$id" "${inferred_ids[@]}"
   fi
 
-  local tmp_content="$TMP_DIR/${id}.md"
-  cp "$content_file" "$tmp_content"
-
   local script_path="$ROOT/bin/batb"
-  nohup "$script_path" summarize "$id" --content-file "$tmp_content" >>"$LOG" 2>&1 &
+  nohup "$script_path" term learn "$id" >>"$LOG" 2>&1 &
   disown >/dev/null 2>&1 || true
 
   echo "$id"
-}
-
-truncate_summary() {
-  local text="$1"
-  if [[ ${#text} -le 200 ]]; then
-    printf "%s" "$text"
-    return
-  fi
-  printf "%s" "${text:0:200}"
-}
-
-cmd_summarize() {
-  local id="" content_file=""
-
-  if [[ $# -lt 1 ]]; then
-    echo "error: id is required" >&2
-    exit 1
-  fi
-  id="$1"
-  shift
-
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --content-file)
-        content_file="$2"
-        shift 2
-        ;;
-      *)
-        echo "error: unknown argument: $1" >&2
-        exit 1
-        ;;
-    esac
-  done
-
-  if [[ -z "$content_file" || ! -f "$content_file" ]]; then
-    echo "error: --content-file is required and must exist" >&2
-    exit 1
-  fi
-
-  init_db
-
-  local extracted json_file
-  json_file="$TMP_DIR/summarize_${id}.json"
-
-  if ! command -v agent >/dev/null 2>&1; then
-    echo "warn: agent not found; summarize skipped for id=$id" >>"$LOG"
-    rm -f "$content_file"
-    exit 1
-  fi
-
-  extracted="$(
-    agent -p --model auto --output-format text \
-      "@$(abs_path "$content_file") 以下の文書を分析し、JSON オブジェクトのみを出力してください。形式は {\"summary\":\"200文字以内の日本語要約\",\"terms\":[{\"name\":\"...\",\"category\":\"client|person|project|process|team|system|meeting\",\"aliases\":[\"...\"],\"description\":\"...\"}],\"relations\":[{\"from\":\"...\",\"to\":\"...\",\"relation\":\"works_for|part_of|uses\"}]} です。summary と terms は必ず含め、文書から読み取れる関係があれば relations にも入れてください。関係は works_for（人物→プロジェクト）、part_of（会議→クライアント、人物→業務工程）、uses（業務工程→システム）の 3 種類のみとし、from と to には terms に挙げた name を書いてください。" \
-      2>/dev/null || true
-  )"
-  printf '%s' "$extracted" >"$json_file"
-
-  if ! parse_agent_json "$json_file" "$id" "summary_and_terms"; then
-    echo "warn: summarize generation failed for id=$id" >>"$LOG"
-    rm -f "$content_file" "$json_file"
-    exit 1
-  fi
-
-  rm -f "$content_file" "$json_file"
 }
 
 cmd_get() {
@@ -544,7 +489,7 @@ build_like_clause() {
   local term esc
   for term in "$@"; do
     esc="$(sql_escape "$term")"
-    clause="$clause AND (title LIKE '%$esc%' OR IFNULL(summary, '') LIKE '%$esc%' OR IFNULL(content, '') LIKE '%$esc%')"
+    clause="$clause AND (title LIKE '%$esc%' OR IFNULL(content, '') LIKE '%$esc%')"
   done
   printf "%s" "$clause"
 }
@@ -567,7 +512,7 @@ build_term_clause() {
 }
 
 print_reference_markdown() {
-  local id="$1" title="$2" summary="$3" source="$4" created_at="$5" updated_at="$6"
+  local id="$1" title="$2" source="$3" created_at="$4" updated_at="$5"
   local terms_line
   terms_line="$(get_reference_terms_display "$id")"
   printf "## %s\n" "$title"
@@ -578,11 +523,6 @@ print_reference_markdown() {
   else
     printf -- "- terms: (なし)\n"
   fi
-  if [[ -n "$summary" ]]; then
-    printf -- "- summary: %s\n" "$summary"
-  else
-    printf -- "- summary: (生成中)\n"
-  fi
   printf -- "- created: %s\n" "$created_at"
   printf -- "- updated: %s\n\n" "$updated_at"
 }
@@ -592,13 +532,13 @@ print_references() {
   local limit_clause="${2:-}"
   local empty_msg="${3:-No references matched.}"
   local found=0
-  while IFS='|' read -r id title summary source created_at updated_at; do
+  while IFS='|' read -r id title source created_at updated_at; do
     [[ -z "${id:-}" ]] && continue
-    print_reference_markdown "$id" "$title" "${summary:-}" "$source" "$created_at" "$updated_at"
+    print_reference_markdown "$id" "$title" "$source" "$created_at" "$updated_at"
     found=1
   done < <(
     db -separator '|' "$LUMIERE" \
-      "SELECT id, title, IFNULL(summary, ''), source, created_at, updated_at
+      "SELECT id, title, source, created_at, updated_at
        FROM reference
        WHERE $where
        ORDER BY updated_at DESC
@@ -1034,13 +974,13 @@ cmd_term_add() {
 }
 
 parse_agent_json() {
-  local json_file="$1" reference_id="${2:-}" mode="${3:-terms_only}"
+  local json_file="$1" reference_id="${2:-}"
   require_cmd python3
-  python3 - "$json_file" "$reference_id" "$LUMIERE" "$mode" <<'PY'
+  python3 - "$json_file" "$reference_id" "$LUMIERE" <<'PY'
 import json, sqlite3, sys
 from datetime import datetime
 
-json_file, reference_id, db_path, mode = sys.argv[1:5]
+json_file, reference_id, db_path = sys.argv[1:4]
 with open(json_file, encoding="utf-8") as f:
     raw = f.read().strip()
 if not raw:
@@ -1064,31 +1004,19 @@ data = extract_json(raw)
 if data is None:
     sys.exit(1)
 
-summary = None
 items = []
 relations = []
 if isinstance(data, dict):
-    summary = (data.get("summary") or "").strip()
     items = data.get("terms") or []
     relations = data.get("relations") or []
 elif isinstance(data, list):
     items = data
 
-if mode == "summary_and_terms" and not summary:
-    sys.exit(1)
-if mode == "terms_only" and not items:
+if not items:
     sys.exit(1)
 
 conn = sqlite3.connect(db_path, timeout=5)
 now = datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
-
-if reference_id and summary and mode == "summary_and_terms":
-    if len(summary) > 200:
-        summary = summary[:200]
-    conn.execute(
-        "UPDATE reference SET summary = ?, updated_at = ? WHERE id = ?",
-        (summary, now, reference_id),
-    )
 
 def slug(category, name):
     s = "".join(ch if ch.isalnum() else "_" for ch in name.lower())
@@ -1329,10 +1257,12 @@ cmd_term_learn() {
     exit 1
   fi
 
+  require_cmd agent
+
   local content
   content="$(db "$LUMIERE" "SELECT content FROM reference WHERE id = '$esc';")"
   if [[ -z "$content" ]]; then
-    echo "warn: no content for vocabulary learn id=$id" >>"$LOG"
+    echo "error: no content to learn from: $id" >&2
     exit 1
   fi
 
@@ -1341,19 +1271,14 @@ cmd_term_learn() {
   json_file="$TMP_DIR/term_learn_${id}.json"
   printf '%s' "$content" >"$content_file"
 
-  if ! command -v agent >/dev/null 2>&1; then
-    rm -f "$content_file"
-    exit 0
-  fi
-
   extracted="$(
     agent -p --model auto --output-format text \
       "@$(abs_path "$content_file") 以下の文書からクライアント名・人物名・プロジェクト名・業務工程・チーム名・システム名・会議名と、それらの関係を抽出してください。JSON オブジェクトのみを出力し、形式は {\"terms\":[{\"name\":\"...\",\"category\":\"client|person|project|process|team|system|meeting\",\"aliases\":[\"...\"],\"description\":\"...\"}],\"relations\":[{\"from\":\"...\",\"to\":\"...\",\"relation\":\"works_for|part_of|uses\"}]} にしてください。関係は works_for（人物→プロジェクト）、part_of（会議→クライアント、人物→業務工程）、uses（業務工程→システム）の 3 種類のみとし、from と to には terms に挙げた name を書いてください。" \
       2>/dev/null || true
   )"
   printf '%s' "$extracted" >"$json_file"
-  if ! parse_agent_json "$json_file" "$id" "terms_only"; then
-    echo "warn: term learn failed for id=$id" >>"$LOG"
+  if ! parse_agent_json "$json_file" "$id"; then
+    echo "error: term learn failed for id=$id" >&2
     rm -f "$content_file" "$json_file"
     exit 1
   fi
@@ -1408,9 +1333,6 @@ main() {
   case "$cmd" in
     save)
       cmd_save "$@"
-      ;;
-    summarize)
-      cmd_summarize "$@"
       ;;
     get)
       cmd_get "$@"

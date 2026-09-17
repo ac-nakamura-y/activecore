@@ -6,7 +6,7 @@ BatB は会議・チャット・ドキュメントの文脈を Agent に渡す�
 
 Lumiere のスキーマと CLI の詳細は [docs/lumiere.md](./docs/lumiere.md)、議事録の自動取り込みは [docs/cogsworth.md](./docs/cogsworth.md) にまとめている。
 
-`reference` テーブルが資料の索引兼キャッシュである。`query` で絞り込み、`get` で本文まで取る。`content` が空のときは `source` から取り直して `save` する。用語の正本は `terms` テーブル群（共通語彙）で、save 時に title から自動推定する。`summary` が `(生成中)` のときは要約ジョブが動いている。同一 `source` への再 `save` は upsert される。
+`reference` テーブルが資料の索引兼キャッシュである。`query` で絞り込み、`get` で本文まで取る。`content` が空のときは `source` から取り直して `save` する。用語の正本は `terms` テーブル群（共通語彙）で、save 時に title から自動推定する。同一 `source` への再 `save` は upsert される。
 
 | table | role |
 | :-- | :-- |
@@ -16,7 +16,7 @@ Lumiere のスキーマと CLI の詳細は [docs/lumiere.md](./docs/lumiere.md)
 | `reference_terms` | 資料と用語の紐付け |
 | `term_relations` | 用語間の関係（works_for, part_of, uses など） |
 
-`save` の直後、バックグラウンドで要約ジョブ（ `summarize` ）が走る。1 回の agent 呼び出しで、要約と、用語・別名・用語間の関係の登録をまとめて行う。既存の用語は名前と別名で引き当てるため、`阪急` のような別名が新しい用語として増えることはない。本文からの語彙抽出だけを行いたいときは `term learn` を手動で実行する。
+`save` の直後、バックグラウンドで語彙ジョブ（ `term learn` ）が走り、本文から用語・別名・用語間の関係を登録する。既存の用語は名前と別名で引き当てるため、`阪急` のような別名が新しい用語として増えることはない。同じ処理は `term learn ID` で手動でも実行できる。
 
 ```
 batb/
@@ -64,7 +64,7 @@ flowchart LR
   saveStep --> intent
 ```
 
-Agent はメタデータ登録・本文キャッシュ・用語付与・要約ジョブの起動まで行う。要約テキストの生成そのものはバックグラウンドジョブが担う。
+Agent はメタデータ登録・本文キャッシュ・用語付与・語彙ジョブの起動まで行う。本文からの用語と関係の抽出はバックグラウンドジョブが担う。
 
 | principle | detail |
 | :-- | :-- |
@@ -75,7 +75,7 @@ Agent はメタデータ登録・本文キャッシュ・用語付与・要約�
 | 根拠の明示 | 議事録・課題・予定など、出典を示す |
 | 推測の禁止 | reference・Calendar・Backlog を見ずに断定しない |
 
-検索では、クライアント名・会議名・プロジェクト名・課題キー・人名など、文脈から複数パターンを試す。`term infer` で拾える用語を確認してから `query --term` する。本文は `get <id>` で取る。要約だけでは論点や決定事項の突合はできない。
+検索では、クライアント名・会議名・プロジェクト名・課題キー・人名など、文脈から複数パターンを試す。`term infer` で拾える用語を確認してから `query --term` する。論点や決定事項を突き合わせるには `get <id>` で本文まで取る。
 
 ```bash
 ~/activecore/bin/batb term infer "確定：トリプルエスさま定例"
