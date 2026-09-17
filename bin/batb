@@ -1,0 +1,1408 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+LUMIERE="$ROOT/db/lumiere.sqlite"
+SCHEMA="$ROOT/schema.sql"
+TMP_DIR="$ROOT/tmp"
+LOG="$TMP_DIR/batb.log"
+
+usage() {
+  cat <<EOF
+usage:
+  batb save  --title TITLE --source SOURCE --content-file PATH [--term NAME ...] [--require-term]
+  batb get ID
+  batb query|list [--limit N] [--term NAME ...] [KEYWORD ...]
+  batb reference link list ID
+  batb reference link add ID --term NAME [...]
+  batb reference link remove ID --term NAME [...]
+  batb reference link set ID --term NAME [...]
+  batb term list [--category CAT]
+  batb term query [KEYWORD ...]
+  batb term infer TEXT...
+  batb term add --name NAME --category CAT [--description DESC] [--alias ALIAS ...]
+  batb term merge SRC --into DST
+  batb term remove NAME
+  batb term learn ID
+
+examples:
+  batb save --title "要件整理" --source "https://example.backlog.com/view/PROJ-1" --content-file /tmp/body.md --term トリプルエス --term FDE
+  batb get 550e8400-e29b-41d4-a716-446655440000
+  batb query --term トリプルエス 要件
+  batb query --limit 10
+  batb term infer "確定：トリプルエスさま定例"
+  batb term query トリプルエス
+EOF
+}
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "error: $1 is required" >&2
+    exit 1
+  fi
+}
+
+sql_escape() {
+  printf "%s" "$1" | sed "s/'/''/g"
+}
+
+db() {
+  sqlite3 -cmd ".timeout 5000" "$@"
+}
+
+now_iso() {
+  date +"%Y-%m-%dT%H:%M:%S%z"
+}
+
+abs_path() {
+  local path="$1" dir base
+  dir="$(cd "$(dirname "$path")" && pwd)"
+  base="$(basename "$path")"
+  printf '%s/%s' "$dir" "$base"
+}
+
+normalize_source() {
+  local source="$1"
+  if [[ "$source" =~ docs\.google\.com/document/d/([a-zA-Z0-9_-]+) ]]; then
+    printf 'https://docs.google.com/document/d/%s/edit' "${BASH_REMATCH[1]}"
+  elif [[ "$source" =~ docs\.google\.com/presentation/d/([a-zA-Z0-9_-]+) ]]; then
+    printf 'https://docs.google.com/presentation/d/%s/edit' "${BASH_REMATCH[1]}"
+  elif [[ -e "$source" ]]; then
+    local dir base
+    dir="$(cd "$(dirname "$source")" && pwd)"
+    base="$(basename "$source")"
+    printf '%s/%s' "$dir" "$base"
+  else
+    printf '%s' "$source"
+  fi
+}
+
+apply_schema() {
+  db "$LUMIERE" < "$SCHEMA"
+}
+
+table_exists() {
+  local name found
+  name="$(sql_escape "$1")"
+  found="$(db "$LUMIERE" "SELECT 1 FROM sqlite_master WHERE type='table' AND name='$name' LIMIT 1;")"
+  [[ -n "$found" ]]
+}
+
+column_exists() {
+  local found
+  found="$(db "$LUMIERE" "SELECT 1 FROM pragma_table_info('$1') WHERE name = '$2' LIMIT 1;")"
+  [[ -n "$found" ]]
+}
+
+schema_is_current() {
+  local found
+  found="$(db "$LUMIERE" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN
+    ('reference', 'terms', 'term_aliases', 'reference_terms', 'term_relations',
+     'refs', 'tags', 'tag_rules', 'ref_tags', 'term_sources');")"
+  if [[ "$found" != "5" ]]; then
+    return 1
+  fi
+  ! column_exists reference summary
+}
+
+rename_legacy_file() {
+  local legacy="$ROOT/db/refs.sqlite"
+  if [[ ! -f "$legacy" || -f "$LUMIERE" ]]; then
+    return 0
+  fi
+  mv "$legacy" "$LUMIERE"
+  local suffix
+  for suffix in wal shm; do
+    if [[ -f "$legacy-$suffix" ]]; then
+      mv "$legacy-$suffix" "$LUMIERE-$suffix"
+    fi
+  done
+}
+
+migrate_tags_to_terms() {
+  db -bail "$LUMIERE" <<'SQL'
+BEGIN;
+
+INSERT OR IGNORE INTO terms (id, name, category, description, created_at, updated_at)
+SELECT 'legacy-' || rowid, name,
+       CASE category WHEN 'tool' THEN 'system' ELSE category END,
+       NULL, '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'
+FROM tags;
+
+INSERT OR IGNORE INTO term_aliases (term_id, alias)
+SELECT t.id, r.pattern
+FROM tag_rules r
+JOIN terms t ON t.name = r.tag;
+
+INSERT OR IGNORE INTO reference_terms (reference_id, term_id)
+SELECT rt.ref_id, t.id
+FROM ref_tags rt
+JOIN terms t ON t.name = rt.tag;
+
+DROP TABLE ref_tags;
+DROP TABLE tag_rules;
+DROP TABLE tags;
+
+COMMIT;
+SQL
+}
+
+init_db() {
+  require_cmd sqlite3
+  mkdir -p "$ROOT/db" "$TMP_DIR"
+  rename_legacy_file
+
+  if [[ -f "$LUMIERE" ]] && schema_is_current; then
+    return 0
+  fi
+
+  if table_exists refs; then
+    db "$LUMIERE" "ALTER TABLE refs RENAME TO reference;"
+  fi
+
+  local has_tags=0
+  if table_exists tags; then
+    has_tags=1
+  fi
+
+  apply_schema
+
+  if (( has_tags )); then
+    migrate_tags_to_terms
+  fi
+
+  if table_exists term_sources; then
+    db "$LUMIERE" "DROP TABLE term_sources;"
+  fi
+
+  if column_exists reference summary; then
+    db "$LUMIERE" "ALTER TABLE reference DROP COLUMN summary;"
+  fi
+}
+
+get_id_by_source() {
+  local source="$1"
+  local normalized esc id
+  normalized="$(normalize_source "$source")"
+  esc="$(sql_escape "$normalized")"
+  id="$(db "$LUMIERE" "SELECT id FROM reference WHERE source = '$esc' LIMIT 1;")"
+  if [[ -n "$id" ]]; then
+    printf '%s' "$id"
+    return
+  fi
+  if [[ "$normalized" =~ /document/d/([a-zA-Z0-9_-]+) ]]; then
+    esc="$(sql_escape "${BASH_REMATCH[1]}")"
+    id="$(db "$LUMIERE" "SELECT id FROM reference WHERE source LIKE '%/document/d/' || '$esc' || '/%' LIMIT 1;")"
+  elif [[ "$normalized" =~ /presentation/d/([a-zA-Z0-9_-]+) ]]; then
+    esc="$(sql_escape "${BASH_REMATCH[1]}")"
+    id="$(db "$LUMIERE" "SELECT id FROM reference WHERE source LIKE '%/presentation/d/' || '$esc' || '/%' LIMIT 1;")"
+  fi
+  if [[ -n "$id" ]]; then
+    printf '%s' "$id"
+  fi
+}
+
+reference_exists() {
+  local id="$1"
+  local esc
+  esc="$(sql_escape "$id")"
+  local found
+  found="$(db "$LUMIERE" "SELECT 1 FROM reference WHERE id = '$esc' LIMIT 1;")"
+  [[ -n "$found" ]]
+}
+
+term_category_order_sql() {
+  printf "CASE category WHEN 'client' THEN 1 WHEN 'meeting' THEN 2 WHEN 'person' THEN 3 WHEN 'project' THEN 4 WHEN 'process' THEN 5 WHEN 'team' THEN 6 WHEN 'system' THEN 7 ELSE 8 END"
+}
+
+term_category_order_sql_t() {
+  printf "CASE t.category WHEN 'client' THEN 1 WHEN 'meeting' THEN 2 WHEN 'person' THEN 3 WHEN 'project' THEN 4 WHEN 'process' THEN 5 WHEN 'team' THEN 6 WHEN 'system' THEN 7 ELSE 8 END"
+}
+
+term_category_label() {
+  case "$1" in
+    client) printf "クライアント" ;;
+    meeting) printf "会議" ;;
+    person) printf "人物" ;;
+    project) printf "プロジェクト" ;;
+    process) printf "業務工程" ;;
+    team) printf "チーム" ;;
+    system) printf "システム" ;;
+    *) printf "%s" "$1" ;;
+  esac
+}
+
+# プロンプトに渡す既存語彙の一覧。行に名前以外を混ぜない。
+# 別名まで載せるとモデルが注記ごと name として写すため、名前だけを出す。
+term_catalog() {
+  db -separator '' "$LUMIERE" \
+    "SELECT t.category || ': ' || t.name
+     FROM terms t
+     ORDER BY $(term_category_order_sql_t), t.name
+     LIMIT 200;"
+}
+
+# 名前か別名の完全一致で引き当てる。category を渡すと、
+# 一致しなかった場合に同じ分類の用語名へちょうど 1 件含まれるかも見る。
+resolve_term_id() {
+  local name="$1" category="${2:-}"
+  local esc esc_cat id
+  esc="$(sql_escape "$name")"
+  id="$(db "$LUMIERE" \
+    "SELECT t.id FROM terms t
+     LEFT JOIN term_aliases a ON a.term_id = t.id
+     WHERE t.name = '$esc' OR a.alias = '$esc'
+     LIMIT 1;")"
+  if [[ -n "$id" || -z "$category" ]]; then
+    printf '%s' "$id"
+    return
+  fi
+  esc_cat="$(sql_escape "$category")"
+  db "$LUMIERE" \
+    "SELECT CASE count(*) WHEN 1 THEN min(id) ELSE '' END
+     FROM terms
+     WHERE category = '$esc_cat' AND instr(lower(name), lower('$esc')) > 0;"
+}
+
+validate_term_names() {
+  local name id
+  for name in "$@"; do
+    id="$(resolve_term_id "$name")"
+    if [[ -z "$id" ]]; then
+      echo "error: unknown term: $name" >&2
+      echo "hint: batb term list" >&2
+      exit 1
+    fi
+  done
+}
+
+clear_reference_terms() {
+  local id="$1"
+  local esc
+  esc="$(sql_escape "$id")"
+  db "$LUMIERE" "DELETE FROM reference_terms WHERE reference_id = '$esc';"
+}
+
+add_reference_terms() {
+  local reference_id="$1"
+  shift
+  local name term_id esc_ref esc_term
+  esc_ref="$(sql_escape "$reference_id")"
+  for name in "$@"; do
+    term_id="$(resolve_term_id "$name")"
+    if [[ -z "$term_id" ]]; then
+      echo "error: unknown term: $name" >&2
+      exit 1
+    fi
+    esc_term="$(sql_escape "$term_id")"
+    db "$LUMIERE" \
+      "INSERT OR IGNORE INTO reference_terms (reference_id, term_id) VALUES ('$esc_ref', '$esc_term');"
+  done
+}
+
+link_reference_term_ids() {
+  local reference_id="$1"
+  shift
+  local term_id esc_ref esc_term
+  esc_ref="$(sql_escape "$reference_id")"
+  for term_id in "$@"; do
+    esc_term="$(sql_escape "$term_id")"
+    db "$LUMIERE" \
+      "INSERT OR IGNORE INTO reference_terms (reference_id, term_id) VALUES ('$esc_ref', '$esc_term');"
+  done
+}
+
+get_reference_terms_display() {
+  local id="$1"
+  local esc order
+  esc="$(sql_escape "$id")"
+  order="$(term_category_order_sql_t)"
+  db -separator ', ' "$LUMIERE" \
+    "SELECT group_concat(name, ', ') FROM (
+       SELECT t.name AS name
+       FROM reference_terms rt
+       JOIN terms t ON t.id = rt.term_id
+       WHERE rt.reference_id = '$esc'
+       ORDER BY $order, t.name
+     );"
+}
+
+infer_term_ids_from_text() {
+  local text="$1"
+  local esc
+  esc="$(sql_escape "$text")"
+  db "$LUMIERE" \
+    "SELECT DISTINCT t.id
+     FROM terms t
+     LEFT JOIN term_aliases a ON a.term_id = t.id
+     WHERE instr(lower('$esc'), lower(t.name)) > 0
+        OR instr(lower('$esc'), lower(a.alias)) > 0
+     ORDER BY $(term_category_order_sql_t), t.name;"
+}
+
+infer_terms_from_text() {
+  local text="$1"
+  local esc
+  esc="$(sql_escape "$text")"
+  db "$LUMIERE" \
+    "SELECT DISTINCT t.name, t.category
+     FROM terms t
+     LEFT JOIN term_aliases a ON a.term_id = t.id
+     WHERE instr(lower('$esc'), lower(t.name)) > 0
+        OR instr(lower('$esc'), lower(a.alias)) > 0
+     ORDER BY $(term_category_order_sql_t), t.name;"
+}
+
+parse_terms_and_rest() {
+  PARSED_TERMS=()
+  PARSED_REST=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --term)
+        if [[ $# -lt 2 ]]; then
+          echo "error: --term requires a value" >&2
+          exit 1
+        fi
+        PARSED_TERMS+=("$2")
+        shift 2
+        ;;
+      --*)
+        echo "error: unknown argument: $1" >&2
+        exit 1
+        ;;
+      *)
+        PARSED_REST+=("$1")
+        shift
+        ;;
+    esac
+  done
+}
+
+cmd_save() {
+  local title="" source="" content_file=""
+  local terms=()
+  local require_term=0
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --title)
+        title="$2"
+        shift 2
+        ;;
+      --source)
+        source="$2"
+        shift 2
+        ;;
+      --content-file)
+        content_file="$2"
+        shift 2
+        ;;
+      --term)
+        terms+=("$2")
+        shift 2
+        ;;
+      --require-term)
+        require_term=1
+        shift
+        ;;
+      *)
+        echo "error: unknown argument: $1" >&2
+        usage >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  if [[ -z "$title" || -z "$source" || -z "$content_file" ]]; then
+    echo "error: --title, --source, and --content-file are required" >&2
+    exit 1
+  fi
+  if [[ ! -f "$content_file" ]]; then
+    echo "error: content file not found: $content_file" >&2
+    exit 1
+  fi
+
+  init_db
+  source="$(normalize_source "$source")"
+
+  local id ts esc_title esc_source abs_content is_new=0 term_id inferred_ids=()
+  ts="$(now_iso)"
+  id="$(get_id_by_source "$source")"
+  if [[ -z "$id" ]]; then
+    is_new=1
+  fi
+
+  if [[ ${#terms[@]} -eq 0 ]]; then
+    while IFS= read -r term_id; do
+      [[ -n "$term_id" ]] && inferred_ids+=("$term_id")
+    done < <(infer_term_ids_from_text "$title")
+  fi
+
+  if [[ "$require_term" -eq 1 && ${#terms[@]} -eq 0 && ${#inferred_ids[@]} -eq 0 ]]; then
+    echo "error: no terms matched title; run term infer and confirm before saving" >&2
+    exit 1
+  fi
+
+  if [[ ${#terms[@]} -gt 0 ]]; then
+    validate_term_names "${terms[@]}"
+  fi
+
+  abs_content="$(abs_path "$content_file")"
+  esc_title="$(sql_escape "$title")"
+  esc_source="$(sql_escape "$source")"
+  local esc_path esc_id
+  esc_path="$(sql_escape "$abs_content")"
+
+  if [[ -n "$id" ]]; then
+    esc_id="$(sql_escape "$id")"
+    db "$LUMIERE" \
+      "UPDATE reference SET title = '$esc_title', content = readfile('$esc_path'), source = '$esc_source', updated_at = '$ts' WHERE id = '$esc_id';"
+  else
+    require_cmd uuidgen
+    id="$(uuidgen | tr '[:upper:]' '[:lower:]')"
+    db "$LUMIERE" \
+      "INSERT INTO reference (id, title, content, source, created_at, updated_at) VALUES ('$id', '$esc_title', readfile('$esc_path'), '$esc_source', '$ts', '$ts');"
+  fi
+
+  if [[ ${#terms[@]} -gt 0 ]]; then
+    clear_reference_terms "$id"
+    add_reference_terms "$id" "${terms[@]}"
+  elif [[ ${#inferred_ids[@]} -gt 0 ]]; then
+    clear_reference_terms "$id"
+    link_reference_term_ids "$id" "${inferred_ids[@]}"
+  fi
+
+  local script_path="$ROOT/bin/batb"
+  nohup "$script_path" term learn "$id" >>"$LOG" 2>&1 &
+  disown >/dev/null 2>&1 || true
+
+  echo "$id"
+}
+
+cmd_get() {
+  if [[ $# -ne 1 ]]; then
+    echo "error: get requires exactly one id" >&2
+    exit 1
+  fi
+
+  init_db
+
+  local id esc
+  id="$1"
+  if ! reference_exists "$id"; then
+    echo "error: reference not found: $id" >&2
+    exit 1
+  fi
+  esc="$(sql_escape "$id")"
+
+  local has_content
+  has_content="$(db "$LUMIERE" "SELECT CASE WHEN content IS NULL OR content = '' THEN 0 ELSE 1 END FROM reference WHERE id = '$esc';")"
+  if [[ "$has_content" -eq 0 ]]; then
+    echo "error: no cached content for id=$id (re-save with --content-file)" >&2
+    exit 1
+  fi
+
+  db "$LUMIERE" "SELECT content FROM reference WHERE id = '$esc';"
+}
+
+build_like_clause() {
+  local clause="1=1"
+  local term esc
+  for term in "$@"; do
+    esc="$(sql_escape "$term")"
+    clause="$clause AND (title LIKE '%$esc%' OR IFNULL(content, '') LIKE '%$esc%')"
+  done
+  printf "%s" "$clause"
+}
+
+build_term_clause() {
+  local clause="1=1"
+  local name term_id esc
+  for name in "$@"; do
+    term_id="$(resolve_term_id "$name")"
+    if [[ -z "$term_id" ]]; then
+      echo "error: unknown term: $name" >&2
+      exit 1
+    fi
+    esc="$(sql_escape "$term_id")"
+    clause="$clause AND EXISTS (
+      SELECT 1 FROM reference_terms rt WHERE rt.reference_id = reference.id AND rt.term_id = '$esc'
+    )"
+  done
+  printf "%s" "$clause"
+}
+
+print_reference_markdown() {
+  local id="$1" title="$2" source="$3" created_at="$4" updated_at="$5"
+  local terms_line
+  terms_line="$(get_reference_terms_display "$id")"
+  printf "## %s\n" "$title"
+  printf -- "- id: %s\n" "$id"
+  printf -- "- source: %s\n" "$source"
+  if [[ -n "$terms_line" ]]; then
+    printf -- "- terms: %s\n" "$terms_line"
+  else
+    printf -- "- terms: (なし)\n"
+  fi
+  printf -- "- created: %s\n" "$created_at"
+  printf -- "- updated: %s\n\n" "$updated_at"
+}
+
+print_references() {
+  local where="$1"
+  local limit_clause="${2:-}"
+  local empty_msg="${3:-No references matched.}"
+  local found=0
+  while IFS='|' read -r id title source created_at updated_at; do
+    [[ -z "${id:-}" ]] && continue
+    print_reference_markdown "$id" "$title" "$source" "$created_at" "$updated_at"
+    found=1
+  done < <(
+    db -separator '|' "$LUMIERE" \
+      "SELECT id, title, source, created_at, updated_at
+       FROM reference
+       WHERE $where
+       ORDER BY updated_at DESC
+       $limit_clause;"
+  )
+  if [[ "$found" -eq 0 ]]; then
+    echo "$empty_msg"
+  fi
+}
+
+cmd_query() {
+  init_db
+
+  local limit="" terms=() keywords=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --limit)
+        limit="$2"
+        shift 2
+        ;;
+      --term)
+        terms+=("$2")
+        shift 2
+        ;;
+      --*)
+        echo "error: unknown argument: $1" >&2
+        exit 1
+        ;;
+      *)
+        keywords+=("$1")
+        shift
+        ;;
+    esac
+  done
+
+  local where term_where limit_clause empty_msg
+  where="1=1"
+  term_where="1=1"
+  if [[ ${#keywords[@]} -gt 0 ]]; then
+    where="$(build_like_clause "${keywords[@]}")"
+  fi
+  if [[ ${#terms[@]} -gt 0 ]]; then
+    term_where="$(build_term_clause "${terms[@]}")"
+  fi
+
+  empty_msg="No references matched."
+  if [[ ${#keywords[@]} -eq 0 ]]; then
+    empty_msg="No references saved yet."
+    [[ -z "$limit" ]] && limit=20
+  fi
+  if [[ -n "$limit" ]]; then
+    limit_clause="LIMIT $limit"
+  fi
+
+  print_references "($where) AND ($term_where)" "$limit_clause" "$empty_msg"
+}
+
+require_reference_and_terms() {
+  local id="$1"
+  local require_terms="$2"
+  shift 2
+
+  parse_terms_and_rest "$@"
+  if [[ ${#PARSED_REST[@]} -gt 0 ]]; then
+    echo "error: unexpected argument: ${PARSED_REST[0]}" >&2
+    exit 1
+  fi
+  if [[ "$require_terms" -eq 1 && ${#PARSED_TERMS[@]} -eq 0 ]]; then
+    echo "error: at least one --term is required" >&2
+    exit 1
+  fi
+
+  init_db
+  if ! reference_exists "$id"; then
+    echo "error: reference not found: $id" >&2
+    exit 1
+  fi
+  if [[ ${#PARSED_TERMS[@]} -gt 0 ]]; then
+    validate_term_names "${PARSED_TERMS[@]}"
+  fi
+}
+
+print_reference_terms_line() {
+  local id="$1"
+  local terms_line
+  terms_line="$(get_reference_terms_display "$id")"
+  if [[ -n "$terms_line" ]]; then
+    printf "terms: %s\n" "$terms_line"
+  else
+    echo "terms: (なし)"
+  fi
+}
+
+cmd_reference_link_add() {
+  if [[ $# -lt 1 ]]; then
+    echo "error: id is required" >&2
+    exit 1
+  fi
+  local id="$1"
+  shift
+  require_reference_and_terms "$id" 1 "$@"
+  add_reference_terms "$id" "${PARSED_TERMS[@]}"
+  print_reference_terms_line "$id"
+}
+
+cmd_reference_link_remove() {
+  if [[ $# -lt 1 ]]; then
+    echo "error: id is required" >&2
+    exit 1
+  fi
+  local id="$1"
+  shift
+  require_reference_and_terms "$id" 1 "$@"
+
+  local name term_id esc_ref esc_term
+  esc_ref="$(sql_escape "$id")"
+  for name in "${PARSED_TERMS[@]}"; do
+    term_id="$(resolve_term_id "$name")"
+    esc_term="$(sql_escape "$term_id")"
+    db "$LUMIERE" \
+      "DELETE FROM reference_terms WHERE reference_id = '$esc_ref' AND term_id = '$esc_term';"
+  done
+  print_reference_terms_line "$id"
+}
+
+cmd_reference_link_set() {
+  if [[ $# -lt 1 ]]; then
+    echo "error: id is required" >&2
+    exit 1
+  fi
+  local id="$1"
+  shift
+  require_reference_and_terms "$id" 0 "$@"
+
+  clear_reference_terms "$id"
+  if [[ ${#PARSED_TERMS[@]} -gt 0 ]]; then
+    add_reference_terms "$id" "${PARSED_TERMS[@]}"
+  fi
+  print_reference_terms_line "$id"
+}
+
+cmd_reference_link_list() {
+  if [[ $# -ne 1 ]]; then
+    echo "error: list requires exactly one reference id" >&2
+    exit 1
+  fi
+  local id="$1"
+  init_db
+  if ! reference_exists "$id"; then
+    echo "error: reference not found: $id" >&2
+    exit 1
+  fi
+  local esc order
+  esc="$(sql_escape "$id")"
+  order="$(term_category_order_sql_t)"
+  while IFS='|' read -r cat name; do
+    printf "%s\t%s\n" "$(term_category_label "$cat")" "$name"
+  done < <(
+    db -separator '|' "$LUMIERE" \
+      "SELECT t.category, t.name
+       FROM reference_terms rt
+       JOIN terms t ON t.id = rt.term_id
+       WHERE rt.reference_id = '$esc'
+       ORDER BY $order, t.name;"
+  )
+}
+
+cmd_reference() {
+  if [[ $# -lt 1 ]]; then
+    echo "error: reference subcommand required (link)" >&2
+    exit 1
+  fi
+  local sub="$1"
+  shift
+  case "$sub" in
+    link)
+      if [[ $# -lt 1 ]]; then
+        echo "error: link subcommand requires action (list|add|remove|set)" >&2
+        exit 1
+      fi
+      local action="$1"
+      shift
+      case "$action" in
+        list)
+          cmd_reference_link_list "$@"
+          ;;
+        add)
+          cmd_reference_link_add "$@"
+          ;;
+        remove)
+          cmd_reference_link_remove "$@"
+          ;;
+        set)
+          cmd_reference_link_set "$@"
+          ;;
+        *)
+          echo "error: unknown link action: $action" >&2
+          exit 1
+          ;;
+      esac
+      ;;
+    *)
+      echo "error: unknown reference subcommand: $sub" >&2
+      exit 1
+      ;;
+  esac
+}
+
+# 学習経路（parse_agent_json の slug）と同じ id を作る。
+term_slug() {
+  require_cmd python3
+  python3 -c '
+import sys
+category, name = sys.argv[1], sys.argv[2]
+s = "".join(ch if ch.isalnum() else "_" for ch in name.lower())
+while "__" in s:
+    s = s.replace("__", "_")
+sys.stdout.write(category + "-" + s.strip("_"))
+' "$1" "$2"
+}
+
+upsert_term() {
+  local name="$1" category="$2" description="${3:-}"
+  local id ts esc_name esc_category esc_desc esc_id
+  ts="$(now_iso)"
+  esc_name="$(sql_escape "$name")"
+  esc_category="$(sql_escape "$category")"
+  esc_desc="$(sql_escape "$description")"
+
+  id="$(resolve_term_id "$name" "$category")"
+  if [[ -z "$id" ]]; then
+    id="$(term_slug "$category" "$name")"
+    esc_id="$(sql_escape "$id")"
+    db "$LUMIERE" \
+      "INSERT INTO terms (id, name, category, description, created_at, updated_at)
+       VALUES ('$esc_id', '$esc_name', '$esc_category', '$esc_desc', '$ts', '$ts');"
+    id="$(db "$LUMIERE" "SELECT id FROM terms WHERE id = '$esc_id' LIMIT 1;")"
+  else
+    esc_id="$(sql_escape "$id")"
+    # 引き当たった用語と表記が違うときは、その表記を別名として残す。
+    add_term_alias "$id" "$name"
+    if [[ -n "$description" ]]; then
+      db "$LUMIERE" \
+        "UPDATE terms SET description = '$esc_desc', updated_at = '$ts' WHERE id = '$esc_id';"
+    fi
+  fi
+
+  printf '%s' "$id"
+}
+
+# 用語名や既存の別名を含む別名は、一致する場所が同じなので登録しない。
+add_term_alias() {
+  local term_id="$1" alias="$2"
+  local esc_id esc_alias redundant
+  esc_id="$(sql_escape "$term_id")"
+  esc_alias="$(sql_escape "$alias")"
+  redundant="$(db "$LUMIERE" \
+    "SELECT 1 FROM terms WHERE id = '$esc_id' AND instr(lower('$esc_alias'), lower(name)) > 0
+     UNION ALL
+     SELECT 1 FROM term_aliases WHERE term_id = '$esc_id' AND instr(lower('$esc_alias'), lower(alias)) > 0
+     LIMIT 1;")"
+  if [[ -n "$redundant" ]]; then
+    return 0
+  fi
+  db "$LUMIERE" "INSERT OR IGNORE INTO term_aliases (term_id, alias) VALUES ('$esc_id', '$esc_alias');"
+}
+
+print_term_detail() {
+  local id="$1"
+  local esc
+  esc="$(sql_escape "$id")"
+  local name category description aliases
+  name="$(db "$LUMIERE" "SELECT name FROM terms WHERE id = '$esc';")"
+  category="$(db "$LUMIERE" "SELECT category FROM terms WHERE id = '$esc';")"
+  description="$(db "$LUMIERE" "SELECT IFNULL(description, '') FROM terms WHERE id = '$esc';")"
+  aliases="$(db -separator ', ' "$LUMIERE" \
+    "SELECT group_concat(alias, ', ') FROM term_aliases WHERE term_id = '$esc';")"
+
+  printf "## %s\n" "$name"
+  printf -- "- category: %s\n" "$(term_category_label "$category")"
+  if [[ -n "$aliases" ]]; then
+    printf -- "- aliases: %s\n" "$aliases"
+  fi
+  if [[ -n "$description" ]]; then
+    printf -- "- description: %s\n" "$description"
+  fi
+
+  while IFS='|' read -r rel_label rel_name rel_cat; do
+    [[ -z "${rel_label:-}" ]] && continue
+    printf -- "- %s: %s (%s)\n" "$rel_label" "$rel_name" "$(term_category_label "$rel_cat")"
+  done < <(
+    db -separator '|' "$LUMIERE" \
+      "SELECT r.relation, t.name, t.category
+       FROM term_relations r JOIN terms t ON t.id = r.to_id
+       WHERE r.from_id = '$esc'
+       ORDER BY t.category, t.name;"
+  )
+
+  while IFS='|' read -r rel_label rel_name rel_cat; do
+    [[ -z "${rel_label:-}" ]] && continue
+    printf -- "- %s <- %s (%s)\n" "$rel_label" "$rel_name" "$(term_category_label "$rel_cat")"
+  done < <(
+    db -separator '|' "$LUMIERE" \
+      "SELECT r.relation, t.name, t.category
+       FROM term_relations r JOIN terms t ON t.id = r.from_id
+       WHERE r.to_id = '$esc'
+       ORDER BY t.category, t.name;"
+  )
+  printf "\n"
+}
+
+cmd_term_list() {
+  init_db
+  local category="" current=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --category)
+        category="$2"
+        shift 2
+        ;;
+      *)
+        echo "error: unknown argument: $1" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  local where="1=1"
+  if [[ -n "$category" ]]; then
+    where="category = '$(sql_escape "$category")'"
+  fi
+
+  while IFS='|' read -r cat name; do
+    if [[ "$cat" != "$current" ]]; then
+      if [[ -n "$current" ]]; then
+        printf "\n"
+      fi
+      printf "%s:\n" "$(term_category_label "$cat")"
+      current="$cat"
+    fi
+    printf "  - %s\n" "$name"
+  done < <(
+    db -separator '|' "$LUMIERE" \
+      "SELECT category, name FROM terms WHERE $where ORDER BY $(term_category_order_sql), name;"
+  )
+}
+
+cmd_term_query() {
+  init_db
+  if [[ $# -eq 0 ]]; then
+    echo "error: query requires at least one keyword" >&2
+    exit 1
+  fi
+
+  if [[ $# -eq 1 ]]; then
+    local exact_id
+    exact_id="$(resolve_term_id "$1")"
+    if [[ -n "$exact_id" ]]; then
+      print_term_detail "$exact_id"
+      return
+    fi
+  fi
+
+  local where="1=1" term esc
+  for term in "$@"; do
+    esc="$(sql_escape "$term")"
+    where="$where AND (
+      t.name LIKE '%$esc%' OR IFNULL(t.description, '') LIKE '%$esc%'
+      OR EXISTS (SELECT 1 FROM term_aliases a WHERE a.term_id = t.id AND a.alias LIKE '%$esc%')
+    )"
+  done
+
+  local found=0 id
+  while IFS= read -r id; do
+    [[ -z "${id:-}" ]] && continue
+    print_term_detail "$id"
+    found=1
+  done < <(
+    db "$LUMIERE" \
+      "SELECT t.id FROM terms t WHERE $where ORDER BY $(term_category_order_sql_t), t.name;"
+  )
+  if [[ "$found" -eq 0 ]]; then
+    echo "No terms matched."
+  fi
+}
+
+cmd_term_infer() {
+  init_db
+  if [[ $# -eq 0 ]]; then
+    echo "error: infer requires text" >&2
+    exit 1
+  fi
+  infer_terms_from_text "$*"
+}
+
+cmd_term_add() {
+  local name="" category="" description=""
+  local aliases=()
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --name)
+        name="$2"
+        shift 2
+        ;;
+      --category)
+        category="$2"
+        shift 2
+        ;;
+      --description)
+        description="$2"
+        shift 2
+        ;;
+      --alias)
+        aliases+=("$2")
+        shift 2
+        ;;
+      *)
+        echo "error: unknown argument: $1" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  if [[ -z "$name" || -z "$category" ]]; then
+    echo "error: --name and --category are required" >&2
+    exit 1
+  fi
+
+  init_db
+  local id alias
+  id="$(upsert_term "$name" "$category" "$description")"
+  if [[ -z "$id" ]]; then
+    echo "error: could not add term: $name ($category)" >&2
+    exit 1
+  fi
+  if [[ ${#aliases[@]} -gt 0 ]]; then
+    for alias in "${aliases[@]}"; do
+      add_term_alias "$id" "$alias"
+    done
+  fi
+  print_term_detail "$id"
+}
+
+parse_agent_json() {
+  local json_file="$1" reference_id="${2:-}"
+  require_cmd python3
+  python3 - "$json_file" "$reference_id" "$LUMIERE" <<'PY'
+import json, sqlite3, sys
+from datetime import datetime
+
+json_file, reference_id, db_path = sys.argv[1:4]
+with open(json_file, encoding="utf-8") as f:
+    raw = f.read().strip()
+if not raw:
+    sys.exit(1)
+
+def extract_json(raw):
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start >= 0 and end > start:
+            return json.loads(raw[start:end + 1])
+        start = raw.find("[")
+        end = raw.rfind("]")
+        if start >= 0 and end > start:
+            return json.loads(raw[start:end + 1])
+    return None
+
+data = extract_json(raw)
+if data is None:
+    sys.exit(1)
+
+items = []
+relations = []
+if isinstance(data, dict):
+    items = data.get("terms") or []
+    relations = data.get("relations") or []
+elif isinstance(data, list):
+    items = data
+
+if not items:
+    sys.exit(1)
+
+conn = sqlite3.connect(db_path, timeout=5)
+now = datetime.now().astimezone().strftime("%Y-%m-%dT%H:%M:%S%z")
+
+def slug(category, name):
+    s = "".join(ch if ch.isalnum() else "_" for ch in name.lower())
+    while "__" in s:
+        s = s.replace("__", "_")
+    return f"{category}-{s.strip('_')}"
+
+def resolve(name, category=None):
+    """名前か別名の完全一致で引き当てる。category は当てにしない。"""
+    row = conn.execute(
+        "SELECT t.id FROM terms t LEFT JOIN term_aliases a ON a.term_id = t.id"
+        " WHERE t.name = ? OR a.alias = ? LIMIT 1",
+        (name, name),
+    ).fetchone()
+    if row:
+        return row[0]
+    if not category:
+        return None
+    # 接頭辞を落とした表記の救済。同じ分類でちょうど 1 件に含まれるときだけ引き当てる。
+    rows = conn.execute(
+        "SELECT id FROM terms WHERE category = ? AND instr(lower(name), lower(?)) > 0",
+        (category, name),
+    ).fetchall()
+    return rows[0][0] if len(rows) == 1 else None
+
+term_ids = []
+for item in items:
+    if not isinstance(item, dict):
+        continue
+    name = (item.get("name") or "").strip()
+    category = (item.get("category") or "").strip()
+    if not name or not category:
+        continue
+    desc = (item.get("description") or "").strip()
+
+    term_id = resolve(name, category)
+    if term_id:
+        if desc:
+            conn.execute(
+                "UPDATE terms SET description = ?, updated_at = ? WHERE id = ?",
+                (desc, now, term_id),
+            )
+    else:
+        term_id = slug(category, name)
+        try:
+            conn.execute(
+                "INSERT INTO terms (id, name, category, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (term_id, name, category, desc or None, now, now),
+            )
+        except sqlite3.IntegrityError as exc:
+            print(f"warn: skipped term {name} ({category}): {exc}", file=sys.stderr)
+            continue
+    term_ids.append(term_id)
+
+    # 引き当たった用語と表記が違うときは、その表記も別名の候補にする。
+    # name や既存 alias を含む別名は、一致する場所が同じなので登録しない。
+    term_name = conn.execute("SELECT name FROM terms WHERE id = ?", (term_id,)).fetchone()[0]
+    known = {a for (a,) in conn.execute("SELECT alias FROM term_aliases WHERE term_id = ?", (term_id,))}
+    known.add(term_name)
+    for alias in [name] + list(item.get("aliases") or []):
+        alias = str(alias).strip()
+        if not alias or any(k.lower() in alias.lower() for k in known):
+            continue
+        conn.execute(
+            "INSERT OR IGNORE INTO term_aliases (term_id, alias) VALUES (?, ?)",
+            (term_id, alias),
+        )
+        known.add(alias)
+
+# 関係は用語を作り終えてから読む。同じ応答で現れた用語も端点にできる。
+RELATIONS = ("works_for", "part_of", "uses")
+for item in relations:
+    if not isinstance(item, dict):
+        continue
+    relation = (item.get("relation") or "").strip()
+    from_name = (item.get("from") or "").strip()
+    to_name = (item.get("to") or "").strip()
+    if not relation or not from_name or not to_name:
+        continue
+    if relation not in RELATIONS:
+        print(f"warn: skipped relation {from_name} -{relation}-> {to_name}: unknown relation", file=sys.stderr)
+        continue
+    from_id = resolve(from_name)
+    to_id = resolve(to_name)
+    if not from_id or not to_id:
+        missing = from_name if not from_id else to_name
+        print(f"warn: skipped relation {from_name} -{relation}-> {to_name}: unknown term {missing}", file=sys.stderr)
+        continue
+    if from_id == to_id:
+        continue
+    if conn.execute(
+        "SELECT 1 FROM term_relations WHERE from_id = ? AND to_id = ? AND relation = ?",
+        (from_id, to_id, relation),
+    ).fetchone():
+        continue
+    try:
+        conn.execute(
+            "INSERT INTO term_relations (from_id, to_id, relation) VALUES (?, ?, ?)",
+            (from_id, to_id, relation),
+        )
+    except sqlite3.IntegrityError as exc:
+        print(f"warn: skipped relation {from_name} -{relation}-> {to_name}: {exc}", file=sys.stderr)
+
+if reference_id:
+    for term_id in term_ids:
+        conn.execute(
+            "INSERT OR IGNORE INTO reference_terms (reference_id, term_id) VALUES (?, ?)",
+            (reference_id, term_id),
+        )
+
+conn.commit()
+PY
+}
+
+# 紐付け・関係・別名を DST へ移し、SRC を削除する。1 トランザクションで行う。
+merge_terms() {
+  require_cmd python3
+  python3 - "$LUMIERE" "$1" "$2" <<'PY'
+import sqlite3, sys
+
+db_path, src_id, dst_id = sys.argv[1:4]
+conn = sqlite3.connect(db_path, timeout=5)
+
+dst_name = conn.execute("SELECT name FROM terms WHERE id = ?", (dst_id,)).fetchone()[0]
+src_name = conn.execute("SELECT name FROM terms WHERE id = ?", (src_id,)).fetchone()[0]
+known = {a for (a,) in conn.execute("SELECT alias FROM term_aliases WHERE term_id = ?", (dst_id,))}
+known.add(dst_name)
+src_aliases = [a for (a,) in conn.execute("SELECT alias FROM term_aliases WHERE term_id = ?", (src_id,))]
+
+# 用語名や既存別名を含む別名は、一致する場所が同じなので移さない。
+for alias in src_aliases + [src_name]:
+    if any(k.lower() in alias.lower() for k in known):
+        continue
+    conn.execute("INSERT OR IGNORE INTO term_aliases (term_id, alias) VALUES (?, ?)", (dst_id, alias))
+    known.add(alias)
+conn.execute("DELETE FROM term_aliases WHERE term_id = ?", (src_id,))
+
+conn.execute("INSERT OR IGNORE INTO reference_terms (reference_id, term_id)"
+             " SELECT reference_id, ? FROM reference_terms WHERE term_id = ?", (dst_id, src_id))
+conn.execute("DELETE FROM reference_terms WHERE term_id = ?", (src_id,))
+
+conn.execute("INSERT OR IGNORE INTO term_relations (from_id, to_id, relation)"
+             " SELECT ?, to_id, relation FROM term_relations WHERE from_id = ?", (dst_id, src_id))
+conn.execute("INSERT OR IGNORE INTO term_relations (from_id, to_id, relation)"
+             " SELECT from_id, ?, relation FROM term_relations WHERE to_id = ?", (dst_id, src_id))
+conn.execute("DELETE FROM term_relations WHERE from_id = ? OR to_id = ?", (src_id, src_id))
+conn.execute("DELETE FROM term_relations WHERE from_id = to_id")
+
+conn.execute("DELETE FROM terms WHERE id = ?", (src_id,))
+conn.commit()
+PY
+}
+
+cmd_term_merge() {
+  local src="" dst=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --into)
+        dst="$2"
+        shift 2
+        ;;
+      --*)
+        echo "error: unknown argument: $1" >&2
+        exit 1
+        ;;
+      *)
+        if [[ -n "$src" ]]; then
+          echo "error: unexpected argument: $1" >&2
+          exit 1
+        fi
+        src="$1"
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$src" || -z "$dst" ]]; then
+    echo "error: merge requires SRC and --into DST" >&2
+    exit 1
+  fi
+
+  init_db
+  local src_id dst_id
+  src_id="$(resolve_term_id "$src")"
+  dst_id="$(resolve_term_id "$dst")"
+  if [[ -z "$src_id" ]]; then
+    echo "error: unknown term: $src" >&2
+    exit 1
+  fi
+  if [[ -z "$dst_id" ]]; then
+    echo "error: unknown term: $dst" >&2
+    exit 1
+  fi
+  if [[ "$src_id" == "$dst_id" ]]; then
+    echo "error: $src and $dst are the same term" >&2
+    exit 1
+  fi
+
+  merge_terms "$src_id" "$dst_id"
+  print_term_detail "$dst_id"
+}
+
+cmd_term_remove() {
+  if [[ $# -ne 1 ]]; then
+    echo "error: remove requires exactly one term name" >&2
+    exit 1
+  fi
+
+  init_db
+  local id esc linked
+  id="$(resolve_term_id "$1")"
+  if [[ -z "$id" ]]; then
+    echo "error: unknown term: $1" >&2
+    exit 1
+  fi
+  esc="$(sql_escape "$id")"
+
+  linked="$(db "$LUMIERE" "SELECT count(*) FROM reference_terms WHERE term_id = '$esc';")"
+  if [[ "$linked" != "0" ]]; then
+    echo "error: $1 is linked to $linked references" >&2
+    echo "hint: batb term merge $1 --into OTHER" >&2
+    exit 1
+  fi
+
+  db -bail "$LUMIERE" <<SQL
+BEGIN;
+DELETE FROM term_aliases WHERE term_id = '$esc';
+DELETE FROM term_relations WHERE from_id = '$esc' OR to_id = '$esc';
+DELETE FROM terms WHERE id = '$esc';
+COMMIT;
+SQL
+
+  echo "removed: $1"
+}
+
+cmd_term_learn() {
+  if [[ $# -ne 1 ]]; then
+    echo "error: learn requires exactly one reference id" >&2
+    exit 1
+  fi
+
+  init_db
+
+  local id="$1" esc
+  esc="$(sql_escape "$id")"
+  if ! reference_exists "$id"; then
+    echo "error: reference not found: $id" >&2
+    exit 1
+  fi
+
+  require_cmd agent
+
+  local content
+  content="$(db "$LUMIERE" "SELECT content FROM reference WHERE id = '$esc';")"
+  if [[ -z "$content" ]]; then
+    echo "error: no content to learn from: $id" >&2
+    exit 1
+  fi
+
+  local content_file json_file extracted
+  content_file="$TMP_DIR/term_learn_${id}.md"
+  json_file="$TMP_DIR/term_learn_${id}.json"
+  printf '%s' "$content" >"$content_file"
+
+  local catalog
+  catalog="$(term_catalog)"
+
+  extracted="$(
+    agent -p --model auto --output-format text \
+      "既存の共通語彙は次のとおりです。\n${catalog}\n一致する概念があれば、name には一覧の表記を 1 文字も変えずに書き、文書中の表記が違う場合だけその表記を aliases に入れてください。一覧に無いものだけ新しい用語にしてください。\n\n@$(abs_path "$content_file") 以下の文書からクライアント名・人物名・プロジェクト名・業務工程・チーム名・システム名・会議名と、それらの関係を抽出してください。JSON オブジェクトのみを出力し、形式は {\"terms\":[{\"name\":\"...\",\"category\":\"client|person|project|process|team|system|meeting\",\"aliases\":[\"...\"],\"description\":\"...\"}],\"relations\":[{\"from\":\"...\",\"to\":\"...\",\"relation\":\"works_for|part_of|uses\"}]} にしてください。関係は works_for（人物→プロジェクト）、part_of（会議→クライアント、人物→業務工程）、uses（業務工程→システム）の 3 種類のみとし、from と to には terms に挙げた name を書いてください。" \
+      2>/dev/null || true
+  )"
+  printf '%s' "$extracted" >"$json_file"
+  if ! parse_agent_json "$json_file" "$id"; then
+    echo "error: term learn failed for id=$id" >&2
+    rm -f "$content_file" "$json_file"
+    exit 1
+  fi
+  rm -f "$content_file" "$json_file"
+}
+
+cmd_term() {
+  if [[ $# -lt 1 ]]; then
+    echo "error: term subcommand required (list|query|infer|add|merge|remove|learn)" >&2
+    exit 1
+  fi
+  local sub="$1"
+  shift
+  case "$sub" in
+    list)
+      cmd_term_list "$@"
+      ;;
+    query)
+      cmd_term_query "$@"
+      ;;
+    infer)
+      cmd_term_infer "$@"
+      ;;
+    add)
+      cmd_term_add "$@"
+      ;;
+    merge)
+      cmd_term_merge "$@"
+      ;;
+    remove)
+      cmd_term_remove "$@"
+      ;;
+    learn)
+      cmd_term_learn "$@"
+      ;;
+    *)
+      echo "error: unknown term subcommand: $sub" >&2
+      exit 1
+      ;;
+  esac
+}
+
+main() {
+  if [[ $# -eq 0 ]]; then
+    usage
+    exit 1
+  fi
+
+  local cmd="$1"
+  shift
+
+  case "$cmd" in
+    save)
+      cmd_save "$@"
+      ;;
+    get)
+      cmd_get "$@"
+      ;;
+    query)
+      cmd_query "$@"
+      ;;
+    list)
+      cmd_query "$@"
+      ;;
+    reference)
+      cmd_reference "$@"
+      ;;
+    term)
+      cmd_term "$@"
+      ;;
+    -h | --help | help)
+      usage
+      ;;
+    *)
+      echo "error: unknown command: $cmd" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+}
+
+main "$@"
