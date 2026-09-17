@@ -232,15 +232,36 @@ term_category_label() {
   esac
 }
 
+# プロンプトに渡す既存語彙の一覧。行に名前以外を混ぜない。
+# 別名まで載せるとモデルが注記ごと name として写すため、名前だけを出す。
+term_catalog() {
+  db -separator '' "$LUMIERE" \
+    "SELECT t.category || ': ' || t.name
+     FROM terms t
+     ORDER BY $(term_category_order_sql_t), t.name
+     LIMIT 200;"
+}
+
+# 名前か別名の完全一致で引き当てる。category を渡すと、
+# 一致しなかった場合に同じ分類の用語名へちょうど 1 件含まれるかも見る。
 resolve_term_id() {
-  local name="$1"
-  local esc
+  local name="$1" category="${2:-}"
+  local esc esc_cat id
   esc="$(sql_escape "$name")"
-  db "$LUMIERE" \
+  id="$(db "$LUMIERE" \
     "SELECT t.id FROM terms t
      LEFT JOIN term_aliases a ON a.term_id = t.id
      WHERE t.name = '$esc' OR a.alias = '$esc'
-     LIMIT 1;"
+     LIMIT 1;")"
+  if [[ -n "$id" || -z "$category" ]]; then
+    printf '%s' "$id"
+    return
+  fi
+  esc_cat="$(sql_escape "$category")"
+  db "$LUMIERE" \
+    "SELECT CASE count(*) WHEN 1 THEN min(id) ELSE '' END
+     FROM terms
+     WHERE category = '$esc_cat' AND instr(lower(name), lower('$esc')) > 0;"
 }
 
 validate_term_names() {
@@ -769,7 +790,7 @@ upsert_term() {
   esc_category="$(sql_escape "$category")"
   esc_desc="$(sql_escape "$description")"
 
-  id="$(resolve_term_id "$name")"
+  id="$(resolve_term_id "$name" "$category")"
   if [[ -z "$id" ]]; then
     id="$(term_slug "$category" "$name")"
     esc_id="$(sql_escape "$id")"
@@ -779,6 +800,8 @@ upsert_term() {
     id="$(db "$LUMIERE" "SELECT id FROM terms WHERE id = '$esc_id' LIMIT 1;")"
   else
     esc_id="$(sql_escape "$id")"
+    # 引き当たった用語と表記が違うときは、その表記を別名として残す。
+    add_term_alias "$id" "$name"
     if [[ -n "$description" ]]; then
       db "$LUMIERE" \
         "UPDATE terms SET description = '$esc_desc', updated_at = '$ts' WHERE id = '$esc_id';"
@@ -788,11 +811,20 @@ upsert_term() {
   printf '%s' "$id"
 }
 
+# 用語名や既存の別名を含む別名は、一致する場所が同じなので登録しない。
 add_term_alias() {
   local term_id="$1" alias="$2"
-  local esc_id esc_alias
+  local esc_id esc_alias redundant
   esc_id="$(sql_escape "$term_id")"
   esc_alias="$(sql_escape "$alias")"
+  redundant="$(db "$LUMIERE" \
+    "SELECT 1 FROM terms WHERE id = '$esc_id' AND instr(lower('$esc_alias'), lower(name)) > 0
+     UNION ALL
+     SELECT 1 FROM term_aliases WHERE term_id = '$esc_id' AND instr(lower('$esc_alias'), lower(alias)) > 0
+     LIMIT 1;")"
+  if [[ -n "$redundant" ]]; then
+    return 0
+  fi
   db "$LUMIERE" "INSERT OR IGNORE INTO term_aliases (term_id, alias) VALUES ('$esc_id', '$esc_alias');"
 }
 
@@ -1024,14 +1056,23 @@ def slug(category, name):
         s = s.replace("__", "_")
     return f"{category}-{s.strip('_')}"
 
-def resolve(name):
-    """既存の用語は name か alias で引き当てる。category は当てにしない。"""
+def resolve(name, category=None):
+    """名前か別名の完全一致で引き当てる。category は当てにしない。"""
     row = conn.execute(
         "SELECT t.id FROM terms t LEFT JOIN term_aliases a ON a.term_id = t.id"
         " WHERE t.name = ? OR a.alias = ? LIMIT 1",
         (name, name),
     ).fetchone()
-    return row[0] if row else None
+    if row:
+        return row[0]
+    if not category:
+        return None
+    # 接頭辞を落とした表記の救済。同じ分類でちょうど 1 件に含まれるときだけ引き当てる。
+    rows = conn.execute(
+        "SELECT id FROM terms WHERE category = ? AND instr(lower(name), lower(?)) > 0",
+        (category, name),
+    ).fetchall()
+    return rows[0][0] if len(rows) == 1 else None
 
 term_ids = []
 for item in items:
@@ -1043,7 +1084,7 @@ for item in items:
         continue
     desc = (item.get("description") or "").strip()
 
-    term_id = resolve(name)
+    term_id = resolve(name, category)
     if term_id:
         if desc:
             conn.execute(
@@ -1062,11 +1103,12 @@ for item in items:
             continue
     term_ids.append(term_id)
 
+    # 引き当たった用語と表記が違うときは、その表記も別名の候補にする。
     # name や既存 alias を含む別名は、一致する場所が同じなので登録しない。
     term_name = conn.execute("SELECT name FROM terms WHERE id = ?", (term_id,)).fetchone()[0]
     known = {a for (a,) in conn.execute("SELECT alias FROM term_aliases WHERE term_id = ?", (term_id,))}
     known.add(term_name)
-    for alias in item.get("aliases") or []:
+    for alias in [name] + list(item.get("aliases") or []):
         alias = str(alias).strip()
         if not alias or any(k.lower() in alias.lower() for k in known):
             continue
@@ -1271,9 +1313,12 @@ cmd_term_learn() {
   json_file="$TMP_DIR/term_learn_${id}.json"
   printf '%s' "$content" >"$content_file"
 
+  local catalog
+  catalog="$(term_catalog)"
+
   extracted="$(
     agent -p --model auto --output-format text \
-      "@$(abs_path "$content_file") 以下の文書からクライアント名・人物名・プロジェクト名・業務工程・チーム名・システム名・会議名と、それらの関係を抽出してください。JSON オブジェクトのみを出力し、形式は {\"terms\":[{\"name\":\"...\",\"category\":\"client|person|project|process|team|system|meeting\",\"aliases\":[\"...\"],\"description\":\"...\"}],\"relations\":[{\"from\":\"...\",\"to\":\"...\",\"relation\":\"works_for|part_of|uses\"}]} にしてください。関係は works_for（人物→プロジェクト）、part_of（会議→クライアント、人物→業務工程）、uses（業務工程→システム）の 3 種類のみとし、from と to には terms に挙げた name を書いてください。" \
+      "既存の共通語彙は次のとおりです。\n${catalog}\n一致する概念があれば、name には一覧の表記を 1 文字も変えずに書き、文書中の表記が違う場合だけその表記を aliases に入れてください。一覧に無いものだけ新しい用語にしてください。\n\n@$(abs_path "$content_file") 以下の文書からクライアント名・人物名・プロジェクト名・業務工程・チーム名・システム名・会議名と、それらの関係を抽出してください。JSON オブジェクトのみを出力し、形式は {\"terms\":[{\"name\":\"...\",\"category\":\"client|person|project|process|team|system|meeting\",\"aliases\":[\"...\"],\"description\":\"...\"}],\"relations\":[{\"from\":\"...\",\"to\":\"...\",\"relation\":\"works_for|part_of|uses\"}]} にしてください。関係は works_for（人物→プロジェクト）、part_of（会議→クライアント、人物→業務工程）、uses（業務工程→システム）の 3 種類のみとし、from と to には terms に挙げた name を書いてください。" \
       2>/dev/null || true
   )"
   printf '%s' "$extracted" >"$json_file"
