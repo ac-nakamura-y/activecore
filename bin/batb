@@ -255,11 +255,11 @@ reference_exists() {
 }
 
 term_category_order_sql() {
-  printf "CASE category WHEN 'client' THEN 1 WHEN 'meeting' THEN 2 WHEN 'person' THEN 3 WHEN 'project' THEN 4 WHEN 'process' THEN 5 WHEN 'team' THEN 6 WHEN 'system' THEN 7 ELSE 8 END"
+  printf "CASE category WHEN 'client' THEN 1 WHEN 'meeting' THEN 2 WHEN 'person' THEN 3 WHEN 'project' THEN 4 WHEN 'process' THEN 5 WHEN 'team' THEN 6 WHEN 'system' THEN 7 WHEN 'meta' THEN 8 ELSE 9 END"
 }
 
 term_category_order_sql_t() {
-  printf "CASE t.category WHEN 'client' THEN 1 WHEN 'meeting' THEN 2 WHEN 'person' THEN 3 WHEN 'project' THEN 4 WHEN 'process' THEN 5 WHEN 'team' THEN 6 WHEN 'system' THEN 7 ELSE 8 END"
+  printf "CASE t.category WHEN 'client' THEN 1 WHEN 'meeting' THEN 2 WHEN 'person' THEN 3 WHEN 'project' THEN 4 WHEN 'process' THEN 5 WHEN 'team' THEN 6 WHEN 'system' THEN 7 WHEN 'meta' THEN 8 ELSE 9 END"
 }
 
 term_category_label() {
@@ -271,6 +271,7 @@ term_category_label() {
     process) printf "業務工程" ;;
     team) printf "チーム" ;;
     system) printf "システム" ;;
+    meta) printf "メタ" ;;
     *) printf "%s" "$1" ;;
   esac
 }
