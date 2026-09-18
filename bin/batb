@@ -25,6 +25,7 @@ usage:
   batb term merge SRC --into DST
   batb term remove NAME
   batb term learn ID
+  batb graph [--out PATH]
 
 examples:
   batb save --title "要件整理" --source "https://example.backlog.com/view/PROJ-1" --content-file /tmp/body.md --term トリプルエス --term FDE
@@ -1358,6 +1359,60 @@ cmd_term_learn() {
   rm -f "$content_file" "$json_file"
 }
 
+cmd_graph() {
+  local out="$TMP_DIR/lumiere-graph.html"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --out)
+        out="$2"
+        shift 2
+        ;;
+      *)
+        echo "error: unknown argument: $1" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  init_db
+  require_cmd python3
+  python3 - "$LUMIERE" "$ROOT/graph.html" "$out" <<'GRAPH'
+import json, sqlite3, sys
+
+db_path, template_path, out_path = sys.argv[1:4]
+conn = sqlite3.connect(db_path, timeout=5)
+
+nodes = []
+for term_id, name, category, description in conn.execute(
+    "SELECT id, name, category, COALESCE(description, '') FROM terms ORDER BY id"
+):
+    refs = conn.execute(
+        "SELECT count(*) FROM reference_terms WHERE term_id = ?", (term_id,)
+    ).fetchone()[0]
+    aliases = [a for (a,) in conn.execute(
+        "SELECT alias FROM term_aliases WHERE term_id = ? ORDER BY alias", (term_id,)
+    )]
+    nodes.append({"id": term_id, "name": name, "category": category,
+                  "refs": refs, "aliases": aliases, "desc": description})
+
+links = [{"source": f, "target": t, "relation": r} for f, t, r in conn.execute(
+    "SELECT from_id, to_id, relation FROM term_relations ORDER BY from_id, to_id, relation"
+)]
+
+with open(template_path, encoding="utf-8") as f:
+    template = f.read()
+if "__DATA__" not in template:
+    sys.exit("error: graph.html has no __DATA__ placeholder")
+
+# 本文に </script> が現れてもページが壊れないようにする。
+data = json.dumps({"nodes": nodes, "links": links}, ensure_ascii=False).replace("</", "<\\/")
+with open(out_path, "w", encoding="utf-8") as f:
+    f.write(template.replace("__DATA__", data))
+
+print(f"{out_path} ({len(nodes)} terms, {len(links)} relations)")
+GRAPH
+}
+
 cmd_term() {
   if [[ $# -lt 1 ]]; then
     echo "error: term subcommand required (list|query|infer|add|merge|remove|learn)" >&2
@@ -1421,6 +1476,9 @@ main() {
       ;;
     term)
       cmd_term "$@"
+      ;;
+    graph)
+      cmd_graph "$@"
       ;;
     -h | --help | help)
       usage
