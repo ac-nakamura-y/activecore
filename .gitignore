@@ -3,6 +3,8 @@ db/refs.sqlite
 db/refs.sqlite-*
 db/lumiere.sqlite
 db/lumiere.sqlite-*
+files/*
+!files/.gitkeep
 tmp/*
 !tmp/.gitkeep
 .playwright-cli/

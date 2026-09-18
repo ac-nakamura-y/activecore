@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LUMIERE="$ROOT/db/lumiere.sqlite"
 SCHEMA="$ROOT/schema.sql"
+FILES_DIR="$ROOT/files"
 TMP_DIR="$ROOT/tmp"
 LOG="$TMP_DIR/batb.log"
 
@@ -61,19 +62,35 @@ abs_path() {
   printf '%s/%s' "$dir" "$base"
 }
 
+storage_path() {
+  local path="$1"
+  if [[ "$path" == "$FILES_DIR"/* ]]; then
+    printf '%s' "$path"
+  else
+    printf '%s/%s' "$FILES_DIR" "$(basename "$path")"
+  fi
+}
+
 normalize_source() {
-  local source="$1"
+  local source="${1#file://}"
   if [[ "$source" =~ docs\.google\.com/document/d/([a-zA-Z0-9_-]+) ]]; then
     printf 'https://docs.google.com/document/d/%s/edit' "${BASH_REMATCH[1]}"
   elif [[ "$source" =~ docs\.google\.com/presentation/d/([a-zA-Z0-9_-]+) ]]; then
     printf 'https://docs.google.com/presentation/d/%s/edit' "${BASH_REMATCH[1]}"
-  elif [[ -e "$source" ]]; then
-    local dir base
-    dir="$(cd "$(dirname "$source")" && pwd)"
-    base="$(basename "$source")"
-    printf '%s/%s' "$dir" "$base"
+  elif [[ "$source" == /* || -e "$source" ]]; then
+    storage_path "$source"
   else
     printf '%s' "$source"
+  fi
+}
+
+store_file() {
+  local origin="$1" stored="$2"
+  if [[ -e "$origin" && "$(abs_path "$origin")" != "$stored" ]]; then
+    cp "$origin" "$stored"
+  elif [[ ! -f "$stored" ]]; then
+    echo "error: source file not found: $origin" >&2
+    exit 1
   fi
 }
 
@@ -147,37 +164,63 @@ COMMIT;
 SQL
 }
 
+migrate_local_sources() {
+  local esc_dir id origin stored esc_id esc_stored updates=""
+  esc_dir="$(sql_escape "$FILES_DIR")"
+  while IFS='|' read -r id origin; do
+    [[ -z "${id:-}" ]] && continue
+    origin="${origin#file://}"
+    stored="$(storage_path "$origin")"
+    esc_id="$(sql_escape "$id")"
+    esc_stored="$(sql_escape "$stored")"
+    if [[ -e "$origin" ]]; then
+      cp "$origin" "$stored"
+    else
+      db -bail "$LUMIERE" "SELECT writefile('$esc_stored', content) FROM reference WHERE id = '$esc_id';" >/dev/null
+    fi
+    if [[ ! -s "$stored" ]]; then
+      echo "error: failed to store local source: $origin" >&2
+      exit 1
+    fi
+    updates="$updates UPDATE reference SET source = '$esc_stored' WHERE id = '$esc_id';"
+  done < <(db -separator '|' "$LUMIERE" "SELECT id, source FROM reference
+    WHERE (source LIKE '/%' OR source LIKE 'file://%') AND source NOT LIKE '$esc_dir/%';")
+
+  [[ -n "$updates" ]] || return 0
+  db -bail "$LUMIERE" "BEGIN;$updates COMMIT;"
+}
+
 init_db() {
   require_cmd sqlite3
-  mkdir -p "$ROOT/db" "$TMP_DIR"
+  mkdir -p "$ROOT/db" "$TMP_DIR" "$FILES_DIR"
   rename_legacy_file
 
-  if [[ -f "$LUMIERE" ]] && schema_is_current; then
-    return 0
+  if [[ ! -f "$LUMIERE" ]] || ! schema_is_current; then
+    if table_exists refs; then
+      db "$LUMIERE" "ALTER TABLE refs RENAME TO reference;"
+    fi
+
+    local has_tags=0
+    if table_exists tags; then
+      has_tags=1
+    fi
+
+    apply_schema
+
+    if (( has_tags )); then
+      migrate_tags_to_terms
+    fi
+
+    if table_exists term_sources; then
+      db "$LUMIERE" "DROP TABLE term_sources;"
+    fi
+
+    if column_exists reference summary; then
+      db "$LUMIERE" "ALTER TABLE reference DROP COLUMN summary;"
+    fi
   fi
 
-  if table_exists refs; then
-    db "$LUMIERE" "ALTER TABLE refs RENAME TO reference;"
-  fi
-
-  local has_tags=0
-  if table_exists tags; then
-    has_tags=1
-  fi
-
-  apply_schema
-
-  if (( has_tags )); then
-    migrate_tags_to_terms
-  fi
-
-  if table_exists term_sources; then
-    db "$LUMIERE" "DROP TABLE term_sources;"
-  fi
-
-  if column_exists reference summary; then
-    db "$LUMIERE" "ALTER TABLE reference DROP COLUMN summary;"
-  fi
+  migrate_local_sources
 }
 
 get_id_by_source() {
@@ -423,6 +466,7 @@ cmd_save() {
   fi
 
   init_db
+  local origin="${source#file://}"
   source="$(normalize_source "$source")"
 
   local id ts esc_title esc_source abs_content is_new=0 term_id inferred_ids=()
@@ -445,6 +489,10 @@ cmd_save() {
 
   if [[ ${#terms[@]} -gt 0 ]]; then
     validate_term_names "${terms[@]}"
+  fi
+
+  if [[ "$source" == "$FILES_DIR"/* ]]; then
+    store_file "$origin" "$source"
   fi
 
   abs_content="$(abs_path "$content_file")"

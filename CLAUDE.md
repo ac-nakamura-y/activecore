@@ -2,7 +2,7 @@
 
 ## Overview
 
-BatB は会議・チャット・ドキュメントの文脈を Agent に渡すためのワークスペースである。SQLite の Lumiere（ `db/lumiere.sqlite` ）に資料をキャッシュし、共通語彙で検索と分類をそろえる。資料の正本は常に `source` 側（Backlog URL、Google Doc URL など）にあり、Lumiere は索引とローカルコピーを保持する。
+BatB は会議・チャット・ドキュメントの文脈を Agent に渡すためのワークスペースである。SQLite の Lumiere（ `db/lumiere.sqlite` ）に資料をキャッシュし、共通語彙で検索と分類をそろえる。資料の正本は外部サービス側（Backlog URL、Google Doc URL など）にあり、Lumiere は索引とローカルコピーを保持する。外部に正本を持たないローカルファイルは `files/` に取り込み、そこを正本とする。
 
 Lumiere のスキーマと CLI の詳細は [docs/lumiere.md](./docs/lumiere.md)、議事録の自動取り込みは [docs/cogsworth.md](./docs/cogsworth.md) にまとめている。
 
@@ -28,6 +28,7 @@ batb/
   .claude/commands/cogsworth.md
   .claude/commands/script/
   db/lumiere.sqlite
+  files/
   tmp/
 ```
 
@@ -89,6 +90,8 @@ Agent はメタデータ登録・本文キャッシュ・用語付与・語彙�
 
 `save` するときの `--source` は種別ごとに次の形式で書く。形式をそろえると同一資料の重複登録を防げる。初回 save か更新時だけ外部から fetch し、以降は `get` を使う。本文は一時ファイルに書いてから `save` する。
 
+ローカルファイルを `--source` に渡すと、`files/` へコピーしたうえで、そのコピーの絶対パスを `source` に記録する。元のファイルが消えても資料は残る。ファイル名が同じ資料は同じ 1 件として扱われるため、日付や版を含む名前を付ける。
+
 `--require-term` を付けると、title からの用語推定に失敗した場合に save を止める。推定できないときは `term infer` の結果をユーザーに確認し、`--term` で明示してから save する。
 
 | type | source format | fetch |
@@ -97,7 +100,7 @@ Agent はメタデータ登録・本文キャッシュ・用語付与・語彙�
 | Slack | permalink URL | `slack_read_thread` / `slack_read_channel` |
 | Google Doc | `https://docs.google.com/.../d/{id}/edit` | `read_file_content` |
 | Notion | `https://www.notion.so/{pageId}` | Notion MCP |
-| local | 絶対パス | ファイル read |
+| local | `files/{ファイル名}` の絶対パス | ファイル read |
 
 ## Cogsworth
 
