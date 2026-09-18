@@ -10,13 +10,13 @@ CREATE TABLE IF NOT EXISTS reference (
 );
 
 -- 共通語彙（terms 系テーブル）
--- category: client | meeting | person | project | process | team | system
+-- category: client | meeting | person | project | process | team | system | meta
 
 CREATE TABLE IF NOT EXISTS terms (
   id          TEXT PRIMARY KEY,
   name        TEXT NOT NULL,
   category    TEXT NOT NULL CHECK (category IN (
-    'client', 'person', 'project', 'process', 'team', 'system', 'meeting'
+    'client', 'person', 'project', 'process', 'team', 'system', 'meeting', 'meta'
   )),
   description TEXT,
   created_at  TEXT NOT NULL,
