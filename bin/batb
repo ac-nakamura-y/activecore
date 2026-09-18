@@ -11,7 +11,7 @@ LOG="$TMP_DIR/batb.log"
 usage() {
   cat <<EOF
 usage:
-  batb save  --title TITLE --source SOURCE --content-file PATH [--term NAME ...] [--require-term]
+  batb save  --title TITLE --source SOURCE [--content-file PATH] [--term NAME ...] [--require-term]
   batb get ID
   batb query|list [--limit N] [--term NAME ...] [KEYWORD ...]
   batb reference link list ID
@@ -164,63 +164,37 @@ COMMIT;
 SQL
 }
 
-migrate_local_sources() {
-  local esc_dir id origin stored esc_id esc_stored updates=""
-  esc_dir="$(sql_escape "$FILES_DIR")"
-  while IFS='|' read -r id origin; do
-    [[ -z "${id:-}" ]] && continue
-    origin="${origin#file://}"
-    stored="$(storage_path "$origin")"
-    esc_id="$(sql_escape "$id")"
-    esc_stored="$(sql_escape "$stored")"
-    if [[ -e "$origin" ]]; then
-      cp "$origin" "$stored"
-    else
-      db -bail "$LUMIERE" "SELECT writefile('$esc_stored', content) FROM reference WHERE id = '$esc_id';" >/dev/null
-    fi
-    if [[ ! -s "$stored" ]]; then
-      echo "error: failed to store local source: $origin" >&2
-      exit 1
-    fi
-    updates="$updates UPDATE reference SET source = '$esc_stored' WHERE id = '$esc_id';"
-  done < <(db -separator '|' "$LUMIERE" "SELECT id, source FROM reference
-    WHERE (source LIKE '/%' OR source LIKE 'file://%') AND source NOT LIKE '$esc_dir/%';")
-
-  [[ -n "$updates" ]] || return 0
-  db -bail "$LUMIERE" "BEGIN;$updates COMMIT;"
-}
-
 init_db() {
   require_cmd sqlite3
   mkdir -p "$ROOT/db" "$TMP_DIR" "$FILES_DIR"
   rename_legacy_file
 
-  if [[ ! -f "$LUMIERE" ]] || ! schema_is_current; then
-    if table_exists refs; then
-      db "$LUMIERE" "ALTER TABLE refs RENAME TO reference;"
-    fi
-
-    local has_tags=0
-    if table_exists tags; then
-      has_tags=1
-    fi
-
-    apply_schema
-
-    if (( has_tags )); then
-      migrate_tags_to_terms
-    fi
-
-    if table_exists term_sources; then
-      db "$LUMIERE" "DROP TABLE term_sources;"
-    fi
-
-    if column_exists reference summary; then
-      db "$LUMIERE" "ALTER TABLE reference DROP COLUMN summary;"
-    fi
+  if [[ -f "$LUMIERE" ]] && schema_is_current; then
+    return 0
   fi
 
-  migrate_local_sources
+  if table_exists refs; then
+    db "$LUMIERE" "ALTER TABLE refs RENAME TO reference;"
+  fi
+
+  local has_tags=0
+  if table_exists tags; then
+    has_tags=1
+  fi
+
+  apply_schema
+
+  if (( has_tags )); then
+    migrate_tags_to_terms
+  fi
+
+  if table_exists term_sources; then
+    db "$LUMIERE" "DROP TABLE term_sources;"
+  fi
+
+  if column_exists reference summary; then
+    db "$LUMIERE" "ALTER TABLE reference DROP COLUMN summary;"
+  fi
 }
 
 get_id_by_source() {
@@ -457,12 +431,8 @@ cmd_save() {
     esac
   done
 
-  if [[ -z "$title" || -z "$source" || -z "$content_file" ]]; then
-    echo "error: --title, --source, and --content-file are required" >&2
-    exit 1
-  fi
-  if [[ ! -f "$content_file" ]]; then
-    echo "error: content file not found: $content_file" >&2
+  if [[ -z "$title" || -z "$source" ]]; then
+    echo "error: --title and --source are required" >&2
     exit 1
   fi
 
@@ -496,7 +466,12 @@ cmd_save() {
     store_file "$origin" "$source"
   fi
 
-  abs_content="$(abs_path "$content_file")"
+  local body="${content_file:-$source}"
+  if [[ ! -f "$body" ]]; then
+    echo "error: content file not found: $body" >&2
+    exit 1
+  fi
+  abs_content="$(abs_path "$body")"
   esc_title="$(sql_escape "$title")"
   esc_source="$(sql_escape "$source")"
   local esc_path esc_id
