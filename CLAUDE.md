@@ -16,7 +16,7 @@ Lumiere のスキーマと CLI の詳細は [docs/lumiere.md](./docs/lumiere.md)
 | `reference_terms` | 資料と用語の紐付け |
 | `term_relations` | 用語間の関係（works_for, part_of, uses など） |
 
-`save` の直後、バックグラウンドで語彙ジョブ（ `term learn` ）が走り、本文から用語・別名・用語間の関係を登録する。既存の用語は名前と別名で引き当てるため、`阪急` のような別名が新しい用語として増えることはない。同じ処理は `term learn ID` で手動でも実行できる。
+`save` の直後、バックグラウンドで語彙ジョブ（ `term learn` ）が走り、本文から用語・別名・用語間の関係を登録する。既存の用語は名前と別名で引き当てるため、`阪急` のような別名が新しい用語として増えることはない。会議だけは例外で、語彙ジョブは新しく作らない。会議は Google Calendar の予定名で `term add --category meeting` する。同じ処理は `term learn ID` で手動でも実行できる。
 
 ```
 batb/
@@ -80,11 +80,11 @@ Agent はメタデータ登録・本文キャッシュ・用語付与・語彙�
 検索では、クライアント名・会議名・プロジェクト名・課題キー・人名など、文脈から複数パターンを試す。`term infer` で拾える用語を確認してから `query --term` する。論点や決定事項を突き合わせるには `get <id>` で本文まで取る。
 
 ```bash
-~/activecore/bin/batb term infer "確定：トリプルエスさま定例"
-~/activecore/bin/batb term query トリプルエス
-~/activecore/bin/batb query --term トリプルエス
-~/activecore/bin/batb query 要件 HTML
-~/activecore/bin/batb query --limit 10
+~/batb/bin/batb term infer "確定：トリプルエスさま定例"
+~/batb/bin/batb term query トリプルエス
+~/batb/bin/batb query --term トリプルエス
+~/batb/bin/batb query 要件 HTML
+~/batb/bin/batb query --limit 10
 ```
 
 ## Source formats

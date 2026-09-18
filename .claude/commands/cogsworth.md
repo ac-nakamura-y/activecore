@@ -26,16 +26,16 @@ Cogsworth は Shell ツールで `loop.py` をバックグランド起動し、s
 
 | item | value |
 | :-- | :-- |
-| loop script | `~/activecore/.claude/commands/script/loop.py` |
+| loop script | `~/batb/.claude/commands/script/loop.py` |
 | hour env | `COGSWORTH_START_HOUR` / `COGSWORTH_END_HOUR` |
 
 ## Disable
 
-タイトル `Cogsworth` のバックグランドシェルを停止する。`pgrep -fl "activecore/.claude/commands/script/loop.py"` でプロセスが残っていればその旨を伝える。シェルもプロセスも見つからなければ、既に停止している旨を伝える。
+タイトル `Cogsworth` のバックグランドシェルを停止する。`pgrep -fl "batb/.claude/commands/script/loop.py"` でプロセスが残っていればその旨を伝える。シェルもプロセスも見つからなければ、既に停止している旨を伝える。
 
 ## Enable
 
-有効化は既存ループの停止、ループの起動、同期の 1 回実行の 3 段階で行う。毎回ループを再起動する。タイトル `Cogsworth` のバックグランドシェルを停止し、`pkill -f "activecore/.claude/commands/script/loop.py"` で残存プロセスがあれば終了する。その後 Shell ツールで `loop.py` を起動する。ループ起動後は直後に同期を 1 回実行し、以降は tick 通知時のみ同期する。
+有効化は既存ループの停止、ループの起動、同期の 1 回実行の 3 段階で行う。毎回ループを再起動する。タイトル `Cogsworth` のバックグランドシェルを停止し、`pkill -f "batb/.claude/commands/script/loop.py"` で残存プロセスがあれば終了する。その後 Shell ツールで `loop.py` を起動する。ループ起動後は直後に同期を 1 回実行し、以降は tick 通知時のみ同期する。
 
 ### Loop startup
 
@@ -43,7 +43,7 @@ Shell ツールでは `block_until_ms` を `0` にし、`notify_on_output` を�
 
 ```json
 {
-  "command": "cd ~/activecore && ~/activecore/.claude/commands/script/loop.py",
+  "command": "cd ~/batb && ~/batb/.claude/commands/script/loop.py",
   "description": "Start Cogsworth loop with tick monitoring",
   "block_until_ms": 0,
   "notify_on_output": {
@@ -74,23 +74,25 @@ Shell ツールでは `block_until_ms` を `0` にし、`notify_on_output` を�
 
 未登録の洗い出しでは、`batb query` の `source` から doc ID を集め、`list_events` の添付で `title` が `Gemini によるメモ` の doc と突合する。`reference` にない doc ID が未登録である。
 
-各未登録件は次の順で登録する。Drive MCP の `read_file_content` で本文を取得し、`~/activecore/tmp/cogsworth_<doc_id>.txt` に保存する。必要なら `batb term infer "<イベント名>"` で共通語彙を確認する。推定できなければ推測せずユーザーに確認する。`save` では `--content-file` が必須で、パスを末尾の positional 引数として渡す形式は使えない。
+各未登録件は次の順で登録する。Drive MCP の `read_file_content` で本文を取得し、`~/batb/tmp/cogsworth_<doc_id>.txt` に保存する。必要なら `batb term infer "<イベント名>"` で共通語彙を確認する。推定できなければ推測せずユーザーに確認する。`save` では `--content-file` が必須で、パスを末尾の positional 引数として渡す形式は使えない。
 
 `--title` にイベント名を渡すと用語は自動推定される。推定できない場合のみ `--term` を明示する。
 
+会議はカレンダーの予定名だけを用語にする。`term infer "<イベント名>"` が会議を返さなければ、その予定名で `batb term add --name "<イベント名>" --category meeting` してから save する。
+
 ```bash
 # 通常: title から自動推定
-~/activecore/bin/batb save \
+~/batb/bin/batb save \
   --title "<イベント名>" \
   --source "https://docs.google.com/document/d/<doc_id>/edit" \
-  --content-file ~/activecore/tmp/cogsworth_<doc_id>.txt \
+  --content-file ~/batb/tmp/cogsworth_<doc_id>.txt \
   --require-term
 
 # 推定不能時: infer で確認した用語を付与
-~/activecore/bin/batb save \
+~/batb/bin/batb save \
   --title "<イベント名>" \
   --source "https://docs.google.com/document/d/<doc_id>/edit" \
-  --content-file ~/activecore/tmp/cogsworth_<doc_id>.txt \
+  --content-file ~/batb/tmp/cogsworth_<doc_id>.txt \
   --term トリプルエス \
   --term "確定：トリプルエスさま定例" \
   --require-term

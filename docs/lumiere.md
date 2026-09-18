@@ -48,21 +48,24 @@ erDiagram
 
 ### Vocabulary layer
 
-共通語彙の正本は `terms` である。マスタデータは `schema.sql` が担う。category は次の 7 種類に限定する。
+共通語彙の正本は `terms` である。マスタデータは `schema.sql` が担う。category は次の 8 種類に限定する。
 
 | category | examples |
 | :-- | :-- |
 | `client` | トリプルエス、SABON |
 | `meeting` | 確定：トリプルエスさま定例、FDEデイリー |
 | `person` | 永田、小松 |
-| `project` | marutto、NBナラマケ |
+| `project` | marutto、PoC型化 |
 | `process` | HTML制作、修正対応 |
 | `team` | マーケOps、FDE |
 | `system` | build-html-tool、Backlog、KARTE |
+| `meta` | マネジメント、キャリア |
 
 `term_aliases` は別名とタイトルマッチ用パターンをまとめたテーブルである。`save` 時の自動推定と `term infer` は、タイトルや本文に `name` または `alias` が含まれるかを大文字小文字の別なく調べて用語を拾う。
 
 `name` を含む別名は登録しない。`name` が一致する場所では別名も必ず一致するため、区別に寄与しない。`阪急交通社` に対する `阪急` のように、`name` より短い表記だけを別名にする。
+
+会議は Google Calendar の予定名だけを `name` に採用する。予定名でない呼び方は別名にする。語彙ジョブ（`term learn`）は会議を新しく作らず、既存の会議に引き当てられなければ読み飛ばす。新しい会議は予定名で `term add --category meeting` する。
 
 `reference_terms` は資料と用語の多対多リンクである。
 
@@ -70,7 +73,7 @@ erDiagram
 
 | relation | meaning |
 | :-- | :-- |
-| `works_for` | 人物がプロジェクトに所属 |
+| `works_for` | 人物がプロジェクトやチームに所属 |
 | `part_of` | 会議がクライアントに紐づく、人物が工程を担当する、など |
 | `uses` | 工程がシステムを利用 |
 | `member_of` | メンバー関係（将来用） |
