@@ -1116,6 +1116,10 @@ for item in items:
                 (desc, now, term_id),
             )
     else:
+        # 会議は Google Calendar の予定名だけを採用する。学習では新しく作らない。
+        if category == "meeting":
+            print(f"warn: skipped meeting {name}: 会議は Google Calendar の予定名で term add する", file=sys.stderr)
+            continue
         term_id = slug(category, name)
         try:
             conn.execute(
@@ -1342,7 +1346,7 @@ cmd_term_learn() {
 
   extracted="$(
     agent -p --model auto --output-format text \
-      "既存の共通語彙は次のとおりです。\n${catalog}\n一致する概念があれば、name には一覧の表記を 1 文字も変えずに書き、文書中の表記が違う場合だけその表記を aliases に入れてください。一覧に無いものだけ新しい用語にしてください。\n\n@$(abs_path "$content_file") 以下の文書からクライアント名・人物名・プロジェクト名・業務工程・チーム名・システム名・会議名と、それらの関係を抽出してください。JSON オブジェクトのみを出力し、形式は {\"terms\":[{\"name\":\"...\",\"category\":\"client|person|project|process|team|system|meeting\",\"aliases\":[\"...\"],\"description\":\"...\"}],\"relations\":[{\"from\":\"...\",\"to\":\"...\",\"relation\":\"works_for|part_of|uses\"}]} にしてください。関係は works_for（人物→プロジェクト）、part_of（会議→クライアント、人物→業務工程）、uses（業務工程→システム）の 3 種類のみとし、from と to には terms に挙げた name を書いてください。" \
+      "既存の共通語彙は次のとおりです。\n${catalog}\n一致する概念があれば、name には一覧の表記を 1 文字も変えずに書き、文書中の表記が違う場合だけその表記を aliases に入れてください。一覧に無いものだけ新しい用語にしてください。\n\n@$(abs_path "$content_file") 以下の文書からクライアント名・人物名・プロジェクト名・業務工程・チーム名・システム名・会議名と、それらの関係を抽出してください。会議は Google Calendar の予定名だけを採用するため、一覧にある会議名のみを挙げ、一覧に無い会議は挙げないでください。JSON オブジェクトのみを出力し、形式は {\"terms\":[{\"name\":\"...\",\"category\":\"client|person|project|process|team|system|meeting\",\"aliases\":[\"...\"],\"description\":\"...\"}],\"relations\":[{\"from\":\"...\",\"to\":\"...\",\"relation\":\"works_for|part_of|uses\"}]} にしてください。関係は works_for（人物→プロジェクト）、part_of（会議→クライアント、人物→業務工程）、uses（業務工程→システム）の 3 種類のみとし、from と to には terms に挙げた name を書いてください。" \
       2>/dev/null || true
   )"
   printf '%s' "$extracted" >"$json_file"

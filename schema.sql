@@ -63,21 +63,22 @@ INSERT OR IGNORE INTO terms (id, name, category, description, created_at, update
 INSERT OR IGNORE INTO term_aliases (term_id, alias) VALUES
   ('client-hankyu-kotsu', '阪急'),
   ('client-triples', 'トリプルS'),
-  ('client-shiseido', 'エリクシール');
+  ('client-shiseido', 'エリクシール'),
+  ('client-kinari', '草花木果');
 
 -- チーム・プロジェクト
 INSERT OR IGNORE INTO terms (id, name, category, description, created_at, updated_at) VALUES
   ('team-marukeops', 'マーケOps', 'team', 'ActiveCore マーケティング Ops チーム', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
   ('team-fde', 'FDE', 'team', 'Forward Deployed Engineering', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
   ('team-isms', 'ISMS', 'team', '情報セキュリティ管理', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
-  ('team-career', 'キャリア', 'team', '評価・査定・キャリア面談', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
+  ('team-career', 'キャリア', 'meta', '評価・査定・キャリア面談', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
   ('project-poc', 'PoC型化', 'project', 'PoC の型化検討', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
   ('project-marutto', 'marutto', 'project', 'marutto 1to1 定例・制作オペレーション', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900'),
-  ('project-nb', 'NB', 'project', 'ナラティブブレイン（制作パートナー）。ナラマケ案件を含む', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900');
+  ('project-nb', 'ナラティブベース', 'team', '制作委託先チーム。ナラマケ案件を含む', '2026-01-01T00:00:00+0900', '2026-01-01T00:00:00+0900');
 
 INSERT OR IGNORE INTO term_aliases (term_id, alias) VALUES
   ('team-marukeops', 'Ops'),
-  ('project-nb', 'ナラティブブレイン'),
+  ('project-nb', 'NB'),
   ('project-nb', 'ナラマケ');
 
 -- 会議（旧 tag_rules の定例名）
