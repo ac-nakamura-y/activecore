@@ -39,6 +39,7 @@ batb/
 | operation | command |
 | :-- | :-- |
 | 保存 | `batb save --title T --source URL --content-file PATH [--term NAME ...] [--require-term]` |
+| 保存（ローカル） | `batb save --title T --source PATH [--term NAME ...] [--require-term]` |
 | 本文 | `batb get ID` |
 | 検索 | `batb query [KEYWORD ...]` / `query --term NAME ...` |
 | 用語推定 | `batb term infer "タイトルや文面"` |
@@ -90,7 +91,7 @@ Agent はメタデータ登録・本文キャッシュ・用語付与・語彙�
 
 `save` するときの `--source` は種別ごとに次の形式で書く。形式をそろえると同一資料の重複登録を防げる。初回 save か更新時だけ外部から fetch し、以降は `get` を使う。本文は一時ファイルに書いてから `save` する。
 
-ローカルファイルを `--source` に渡すと、`files/` へコピーしたうえで、そのコピーの絶対パスを `source` に記録する。元のファイルが消えても資料は残る。ファイル名が同じ資料は同じ 1 件として扱われるため、日付や版を含む名前を付ける。
+ローカルファイルを `--source` に渡すと、`files/` へコピーしたうえで、そのコピーの絶対パスを `source` に記録する。元のファイルが消えても資料は残る。このとき本文はコピーしたファイルから読むため、`--content-file` は省略する。ファイル名が同じ資料は同じ 1 件として扱われるため、日付や版を含む名前を付ける。
 
 `--require-term` を付けると、title からの用語推定に失敗した場合に save を止める。推定できないときは `term infer` の結果をユーザーに確認し、`--term` で明示してから save する。
 
