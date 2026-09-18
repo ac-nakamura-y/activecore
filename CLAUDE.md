@@ -24,6 +24,7 @@ batb/
   docs/lumiere.md
   docs/cogsworth.md
   schema.sql
+  graph.html
   bin/batb
   .claude/commands/cogsworth.md
   .claude/commands/script/
@@ -50,6 +51,7 @@ batb/
 | 用語削除 | `batb term remove NAME`（資料が紐付いていれば拒否する） |
 | 語彙学習 | `batb term learn ID`（手動・バッチ用） |
 | 資料の用語 | `batb reference link list|add|remove|set ID --term NAME ...` |
+| 関係グラフ | `batb graph [--out PATH]` |
 
 ## Agent workflow
 

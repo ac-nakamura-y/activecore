@@ -1,0 +1,754 @@
+<title>Lumiere 共通語彙マップ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Old+Mincho:wght@400;600&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --surface: #EDEFF3;
+    --panel: #F8F9FB;
+    --sunken: #E4E8EF;
+    --ink: #161A21;
+    --ink-2: #4C5563;
+    --ink-3: #7C8696;
+    --line: #D2D8E2;
+    --edge: #8A93A2;
+    --halo: #EDEFF3;
+    --c-client: #C8453F;
+    --c-person: #00948B;
+    --c-meeting: #B4730A;
+    --c-team: #2F62D6;
+    --c-process: #3C8A2E;
+    --c-project: #7A4FD8;
+    --c-meta: #7A8410;
+    --c-system: #BE3C93;
+    --focus: #2F62D6;
+    --sans: "Zen Kaku Gothic New", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
+    --display: "Zen Old Mincho", "Hiragino Mincho ProN", "Yu Mincho", serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --surface: #11151C;
+      --panel: #171C25;
+      --sunken: #1E2530;
+      --ink: #E7EBF1;
+      --ink-2: #AAB4C2;
+      --ink-3: #7E8898;
+      --line: #2A323E;
+      --edge: #5A6675;
+      --halo: #11151C;
+      --c-client: #E0665E;
+      --c-person: #1FA79B;
+      --c-meeting: #BE8721;
+      --c-team: #6089EE;
+      --c-process: #55A644;
+      --c-project: #987CF0;
+      --c-meta: #949C22;
+      --c-system: #D75BA3;
+      --focus: #6089EE;
+    }
+  }
+  :root[data-theme="dark"] {
+    --surface: #11151C;
+    --panel: #171C25;
+    --sunken: #1E2530;
+    --ink: #E7EBF1;
+    --ink-2: #AAB4C2;
+    --ink-3: #7E8898;
+    --line: #2A323E;
+    --edge: #5A6675;
+    --halo: #11151C;
+    --c-client: #E0665E;
+    --c-person: #1FA79B;
+    --c-meeting: #BE8721;
+    --c-team: #6089EE;
+    --c-process: #55A644;
+    --c-project: #987CF0;
+    --c-meta: #949C22;
+    --c-system: #D75BA3;
+    --focus: #6089EE;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--surface);
+    color: var(--ink);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  .app {
+    display: grid;
+    grid-template-columns: 292px 1fr;
+    height: 100dvh;
+    min-height: 520px;
+  }
+
+  /* ---------- rail ---------- */
+  .rail {
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+    padding: 22px 20px 28px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+  }
+  .masthead h1 {
+    font-family: var(--display);
+    font-weight: 600;
+    font-size: 21px;
+    letter-spacing: .02em;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+  .masthead p {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.65;
+    color: var(--ink-2);
+  }
+  .tally {
+    margin-top: 12px;
+    display: flex;
+    gap: 14px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .tally b { color: var(--ink); font-weight: 500; font-size: 13px; }
+
+  .group { display: flex; flex-direction: column; gap: 9px; }
+  .group > h2 {
+    margin: 0;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .13em;
+    color: var(--ink-3);
+  }
+
+  .search {
+    width: 100%;
+    background: var(--sunken);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 9px 11px;
+    font: inherit;
+    font-size: 13px;
+    color: var(--ink);
+  }
+  .search::placeholder { color: var(--ink-3); }
+
+  .chips { display: flex; flex-direction: column; gap: 1px; }
+  .chip {
+    display: grid;
+    grid-template-columns: 12px 1fr auto;
+    align-items: center;
+    gap: 9px;
+    padding: 6px 8px;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--ink);
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .chip:hover { background: var(--sunken); }
+  .chip .dot {
+    width: 11px; height: 11px;
+    border-radius: 50%;
+    background: var(--hue);
+  }
+  .chip .n {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-3);
+    font-variant-numeric: tabular-nums;
+  }
+  .chip[aria-pressed="false"] { color: var(--ink-3); }
+  .chip[aria-pressed="false"] .dot { background: none; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
+
+  .rel { grid-template-columns: 26px 1fr auto; }
+  .rel svg { overflow: visible; }
+  .rel[aria-pressed="false"] svg { opacity: .35; }
+
+  .toggle {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-size: 12.5px;
+    color: var(--ink-2);
+    cursor: pointer;
+    padding: 4px 0;
+  }
+  .toggle input { accent-color: var(--focus); width: 14px; height: 14px; }
+
+  .ghost {
+    align-self: flex-start;
+    background: none;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 7px 13px;
+    font: inherit;
+    font-size: 12px;
+    color: var(--ink-2);
+    cursor: pointer;
+  }
+  .ghost:hover { border-color: var(--ink-3); color: var(--ink); }
+
+  .foot {
+    margin-top: auto;
+    font-size: 11px;
+    line-height: 1.7;
+    color: var(--ink-3);
+  }
+
+  /* ---------- stage ---------- */
+  .stage { position: relative; overflow: hidden; }
+  #graph { display: block; width: 100%; height: 100%; cursor: grab; }
+  #graph.dragging { cursor: grabbing; }
+
+  .hint {
+    position: absolute;
+    left: 18px; bottom: 16px;
+    font-size: 11px;
+    color: var(--ink-3);
+    pointer-events: none;
+  }
+
+  .node-label {
+    font-family: var(--sans);
+    font-size: 11px;
+    fill: var(--ink);
+    paint-order: stroke;
+    stroke: var(--halo);
+    stroke-width: 3.5px;
+    stroke-linejoin: round;
+    pointer-events: none;
+  }
+  .node circle { cursor: pointer; }
+
+  /* ---------- detail ---------- */
+  .detail {
+    position: absolute;
+    top: 18px; right: 18px;
+    width: 316px;
+    max-height: calc(100% - 36px);
+    overflow-y: auto;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+    box-shadow: 0 14px 40px -24px rgba(8, 12, 20, .55);
+  }
+  .detail header { display: flex; align-items: flex-start; gap: 10px; }
+  .detail h3 {
+    font-family: var(--display);
+    font-size: 19px;
+    font-weight: 600;
+    margin: 0;
+    flex: 1;
+    line-height: 1.35;
+    text-wrap: balance;
+  }
+  .close {
+    background: none; border: 0; padding: 2px 4px;
+    font-size: 17px; line-height: 1;
+    color: var(--ink-3); cursor: pointer;
+  }
+  .close:hover { color: var(--ink); }
+  .kind {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-top: 9px;
+    font-size: 11.5px;
+    color: var(--ink-2);
+  }
+  .kind .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--hue); }
+  .kind .n { font-family: var(--mono); color: var(--ink-3); }
+  .detail .desc {
+    margin: 13px 0 0;
+    font-size: 12.5px;
+    line-height: 1.75;
+    color: var(--ink-2);
+  }
+  .detail h4 {
+    margin: 18px 0 7px;
+    font-size: 10px;
+    letter-spacing: .13em;
+    color: var(--ink-3);
+    font-weight: 700;
+  }
+  .aliases { display: flex; flex-wrap: wrap; gap: 5px; }
+  .aliases span {
+    background: var(--sunken);
+    border-radius: 4px;
+    padding: 3px 7px;
+    font-size: 11.5px;
+    color: var(--ink-2);
+  }
+  .links { display: flex; flex-direction: column; gap: 2px; }
+  .links button {
+    display: grid;
+    grid-template-columns: 11px 1fr auto;
+    align-items: center;
+    gap: 8px;
+    background: none; border: 0;
+    border-radius: 5px;
+    padding: 5px 6px;
+    font: inherit;
+    font-size: 12.5px;
+    color: var(--ink);
+    text-align: left;
+    cursor: pointer;
+    width: 100%;
+  }
+  .links button:hover { background: var(--sunken); }
+  .links .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--hue); }
+  .links em { font-style: normal; font-size: 11px; color: var(--ink-3); white-space: nowrap; }
+
+  @media (max-width: 860px) {
+    .app { grid-template-columns: 1fr; grid-template-rows: auto 1fr; height: 100dvh; }
+    .rail {
+      border-right: 0;
+      border-bottom: 1px solid var(--line);
+      max-height: 46dvh;
+      padding: 16px 16px 20px;
+      gap: 16px;
+    }
+    .foot { display: none; }
+    .detail {
+      position: fixed;
+      inset: auto 0 0 0;
+      width: auto;
+      max-height: 58dvh;
+      border-radius: 12px 12px 0 0;
+      border-bottom: 0;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+
+<div class="app">
+  <aside class="rail">
+    <div class="masthead">
+      <h1>Lumiere 共通語彙マップ</h1>
+      <p>BatB の資料に付く用語と、用語どうしの関係。円の大きさは紐付いた資料の数。</p>
+      <div class="tally">
+        <span><b id="t-nodes">0</b> 用語</span>
+        <span><b id="t-links">0</b> 関係</span>
+      </div>
+    </div>
+
+    <div class="group">
+      <h2>さがす</h2>
+      <input id="q" class="search" type="search" placeholder="用語名・別名で絞り込む" autocomplete="off">
+    </div>
+
+    <div class="group">
+      <h2>分類</h2>
+      <div class="chips" id="cats"></div>
+    </div>
+
+    <div class="group">
+      <h2>関係</h2>
+      <div class="chips" id="rels"></div>
+    </div>
+
+    <div class="group">
+      <label class="toggle">
+        <input type="checkbox" id="iso"> 関係のない用語も出す（<span id="iso-n">0</span> 件）
+      </label>
+      <button class="ghost" id="reset" type="button">表示をもどす</button>
+    </div>
+
+    <p class="foot">ノードをドラッグすると動かせる。ホイールで拡大縮小、背景をドラッグで移動。</p>
+  </aside>
+
+  <main class="stage">
+    <svg id="graph" aria-label="共通語彙の関係グラフ"></svg>
+    <p class="hint">ノードを選ぶと、その用語の関係が見える。</p>
+
+    <section class="detail" id="detail" hidden>
+      <header>
+        <h3 id="d-name"></h3>
+        <button class="close" id="d-close" type="button" aria-label="閉じる">×</button>
+      </header>
+      <div class="kind"><span class="dot" id="d-dot"></span><span id="d-cat"></span><span class="n" id="d-refs"></span></div>
+      <p class="desc" id="d-desc"></p>
+      <div id="d-alias-wrap" hidden>
+        <h4>別名</h4>
+        <div class="aliases" id="d-aliases"></div>
+      </div>
+      <div id="d-out-wrap" hidden>
+        <h4>この用語から</h4>
+        <div class="links" id="d-out"></div>
+      </div>
+      <div id="d-in-wrap" hidden>
+        <h4>この用語へ</h4>
+        <div class="links" id="d-in"></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<script id="graph-data" type="application/json">__DATA__</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js" integrity="sha512-vc58qvvBdrDR4etbxMdlTt4GBQk1qjvyORR2nrsPsFPyrs+/u5c3+1Ct6upOgdZoIl7eq6k3a1UPDSNAQi/32A==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+(function () {
+  const raw = JSON.parse(document.getElementById('graph-data').textContent);
+
+  const CATS = [
+    ['client',  'クライアント', '--c-client'],
+    ['person',  '人物',         '--c-person'],
+    ['meeting', '会議',         '--c-meeting'],
+    ['team',    'チーム',       '--c-team'],
+    ['process', '業務工程',     '--c-process'],
+    ['project', 'プロジェクト', '--c-project'],
+    ['meta',    'メタ',         '--c-meta'],
+    ['system',  'システム',     '--c-system'],
+  ];
+  const CAT_LABEL = Object.fromEntries(CATS.map(c => [c[0], c[1]]));
+  const CAT_VAR   = Object.fromEntries(CATS.map(c => [c[0], `var(${c[2]})`]));
+
+  const RELS = [
+    ['part_of',   '紐づく',  '', 'に紐づく'],
+    ['uses',      '利用する', '5 3', 'を利用する'],
+    ['works_for', '所属する', '1.5 3', 'に所属する'],
+  ];
+  const REL_LABEL = Object.fromEntries(RELS.map(r => [r[0], r[1]]));
+  const REL_PHRASE = Object.fromEntries(RELS.map(r => [r[0], r[3]]));
+  const REL_DASH = Object.fromEntries(RELS.map(r => [r[0], r[2]]));
+
+  const nodes = raw.nodes.map(n => Object.assign({}, n));
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const links = raw.links
+    .filter(l => byId.has(l.source) && byId.has(l.target))
+    .map(l => ({ source: byId.get(l.source), target: byId.get(l.target), relation: l.relation }));
+
+  const degree = new Map(nodes.map(n => [n.id, 0]));
+  const neighbours = new Map(nodes.map(n => [n.id, new Set()]));
+  links.forEach(l => {
+    degree.set(l.source.id, degree.get(l.source.id) + 1);
+    degree.set(l.target.id, degree.get(l.target.id) + 1);
+    neighbours.get(l.source.id).add(l.target.id);
+    neighbours.get(l.target.id).add(l.source.id);
+  });
+  const isolatedCount = nodes.filter(n => degree.get(n.id) === 0).length;
+  const radius = n => Math.min(24, 5 + Math.sqrt(n.refs) * 2.1);
+
+  const state = {
+    cats: new Set(CATS.map(c => c[0])),
+    rels: new Set(RELS.map(r => r[0])),
+    showIsolated: false,
+    query: '',
+    selected: null,
+    hovered: null,
+  };
+
+  /* ---------- svg scaffold ---------- */
+  const svg = d3.select('#graph');
+  const defs = svg.append('defs');
+  [['arrow', 'var(--edge)'], ['arrow-hi', 'var(--ink-2)']].forEach(([id, fill]) => {
+    defs.append('marker')
+      .attr('id', id).attr('viewBox', '0 -4 8 8')
+      .attr('refX', 8).attr('refY', 0)
+      .attr('markerWidth', 5).attr('markerHeight', 5)
+      .attr('orient', 'auto')
+      .append('path').attr('d', 'M0,-3.2L8,0L0,3.2').attr('fill', fill);
+  });
+  const root = svg.append('g');
+  const gLink = root.append('g');
+  const gNode = root.append('g');
+  const gText = root.append('g');
+
+  let scale = 1, userMoved = false;
+  const zoom = d3.zoom().scaleExtent([0.25, 4]).on('zoom', e => {
+    root.attr('transform', e.transform);
+    scale = e.transform.k;
+    if (e.sourceEvent) userMoved = true;
+    paintLabels();
+  });
+  svg.call(zoom);
+
+  const sim = d3.forceSimulation(nodes)
+    .force('link', d3.forceLink([]).id(d => d.id).distance(l => l.relation === 'uses' ? 64 : 82).strength(0.55))
+    .force('charge', d3.forceManyBody().strength(-230).distanceMax(560))
+    .force('collide', d3.forceCollide().radius(d => radius(d) + 9))
+    .force('x', d3.forceX().strength(0.06))
+    .force('y', d3.forceY().strength(0.075))
+    .on('tick', tick)
+    .on('end', () => { if (!userMoved) fitView(false); });
+
+  function fitView(animate) {
+    const ns = sim.nodes();
+    if (!ns.length) return;
+    const stage = document.querySelector('.stage').getBoundingClientRect();
+    const xs = ns.map(n => n.x), ys = ns.map(n => n.y);
+    const pad = 54;
+    const w = Math.max(1, d3.max(xs) - d3.min(xs)) + pad * 2;
+    const h = Math.max(1, d3.max(ys) - d3.min(ys)) + pad * 2;
+    const k = Math.min(1.5, stage.width / w, stage.height / h);
+    const cx = (d3.min(xs) + d3.max(xs)) / 2, cy = (d3.min(ys) + d3.max(ys)) / 2;
+    const t = d3.zoomIdentity.scale(k).translate(-cx, -cy);
+    (animate ? svg.transition().duration(500) : svg).call(zoom.transform, t);
+  }
+
+  let linkSel = gLink.selectAll('line');
+  let nodeSel = gNode.selectAll('g');
+  let textSel = gText.selectAll('text');
+
+  function visible() {
+    const ns = nodes.filter(n =>
+      state.cats.has(n.category) && (state.showIsolated || degree.get(n.id) > 0));
+    const ok = new Set(ns.map(n => n.id));
+    const ls = links.filter(l => state.rels.has(l.relation) && ok.has(l.source.id) && ok.has(l.target.id));
+    return { ns, ls };
+  }
+
+  function draw() {
+    const { ns, ls } = visible();
+
+    linkSel = gLink.selectAll('line').data(ls, d => d.source.id + '>' + d.target.id + d.relation)
+      .join(enter => enter.append('line')
+        .attr('stroke-width', 1.1)
+        .attr('stroke-dasharray', d => REL_DASH[d.relation] || null)
+        .attr('marker-end', 'url(#arrow)'));
+
+    nodeSel = gNode.selectAll('g').data(ns, d => d.id)
+      .join(enter => {
+        const g = enter.append('g').attr('class', 'node');
+        g.append('circle')
+          .attr('r', radius)
+          .attr('stroke-width', 1.5)
+          .on('pointerenter', (e, d) => { state.hovered = d; paint(); })
+          .on('pointerleave', () => { state.hovered = null; paint(); })
+          .on('click', (e, d) => { e.stopPropagation(); select(d); })
+          .call(d3.drag()
+            .on('start', (e, d) => {
+              if (!e.active) sim.alphaTarget(0.18).restart();
+              d.fx = d.x; d.fy = d.y;
+              svg.node().classList.add('dragging');
+            })
+            .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; })
+            .on('end', (e, d) => {
+              if (!e.active) sim.alphaTarget(0);
+              d.fx = null; d.fy = null;
+              svg.node().classList.remove('dragging');
+            }));
+        g.append('title').text(d => `${d.name}（${CAT_LABEL[d.category]}・資料 ${d.refs} 件）`);
+        return g;
+      });
+
+    textSel = gText.selectAll('text').data(ns, d => d.id)
+      .join(enter => enter.append('text')
+        .attr('class', 'node-label')
+        .attr('text-anchor', 'middle')
+        .text(d => d.name));
+
+    sim.nodes(ns);
+    sim.force('link').links(ls);
+    sim.alpha(0.55).restart();
+
+    document.getElementById('t-nodes').textContent = ns.length;
+    document.getElementById('t-links').textContent = ls.length;
+    paint();
+  }
+
+  function matches(n) {
+    if (!state.query) return true;
+    const q = state.query.toLowerCase();
+    return n.name.toLowerCase().includes(q) || n.aliases.some(a => a.toLowerCase().includes(q));
+  }
+
+  function paint() {
+    const focus = state.selected || state.hovered;
+    const near = focus ? neighbours.get(focus.id) : null;
+
+    nodeSel.select('circle')
+      .attr('fill', d => CAT_VAR[d.category])
+      .attr('stroke', 'var(--halo)')
+      .attr('opacity', d => {
+        if (!matches(d)) return 0.08;
+        if (!focus) return 0.92;
+        return d.id === focus.id || near.has(d.id) ? 1 : 0.12;
+      });
+
+    linkSel
+      .attr('stroke', d => focus && (d.source.id === focus.id || d.target.id === focus.id)
+        ? 'var(--ink-2)' : 'var(--edge)')
+      .attr('marker-end', d => focus && (d.source.id === focus.id || d.target.id === focus.id)
+        ? 'url(#arrow-hi)' : 'url(#arrow)')
+      .attr('opacity', d => {
+        const hit = focus && (d.source.id === focus.id || d.target.id === focus.id);
+        if (focus) return hit ? 0.95 : 0.06;
+        return state.query ? 0.12 : 0.34;
+      });
+
+    paintLabels();
+  }
+
+  function paintLabels() {
+    const focus = state.selected || state.hovered;
+    const near = focus ? neighbours.get(focus.id) : null;
+    const floor = scale > 1.7 ? 0 : scale > 1.1 ? 6 : 12;
+    textSel
+      .attr('font-size', d => (focus && d.id === focus.id) ? 13 : 11)
+      .attr('font-weight', d => (focus && d.id === focus.id) ? 700 : 500)
+      .attr('opacity', d => {
+        if (!matches(d)) return 0;
+        if (focus) return (d.id === focus.id || near.has(d.id)) ? 1 : 0;
+        if (state.query) return 1;
+        return d.refs >= floor ? 0.95 : 0;
+      });
+  }
+
+  function tick() {
+    linkSel
+      .attr('x1', d => d.source.x).attr('y1', d => d.source.y)
+      .attr('x2', d => {
+        const a = Math.atan2(d.target.y - d.source.y, d.target.x - d.source.x);
+        return d.target.x - Math.cos(a) * (radius(d.target) + 4);
+      })
+      .attr('y2', d => {
+        const a = Math.atan2(d.target.y - d.source.y, d.target.x - d.source.x);
+        return d.target.y - Math.sin(a) * (radius(d.target) + 4);
+      });
+    nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
+    textSel.attr('x', d => d.x).attr('y', d => d.y + radius(d) + 12);
+  }
+
+  /* ---------- detail panel ---------- */
+  const detail = document.getElementById('detail');
+  function select(n) {
+    state.selected = n;
+    if (!n) { detail.hidden = true; paint(); return; }
+
+    document.getElementById('d-name').textContent = n.name;
+    document.getElementById('d-dot').style.setProperty('--hue', CAT_VAR[n.category]);
+    document.getElementById('d-cat').textContent = CAT_LABEL[n.category];
+    document.getElementById('d-refs').textContent = `資料 ${n.refs} 件`;
+    const desc = document.getElementById('d-desc');
+    desc.textContent = n.desc || '';
+    desc.hidden = !n.desc;
+
+    const aw = document.getElementById('d-alias-wrap');
+    aw.hidden = n.aliases.length === 0;
+    document.getElementById('d-aliases').replaceChildren(
+      ...n.aliases.map(a => { const s = document.createElement('span'); s.textContent = a; return s; }));
+
+    const rows = (list, dir) => list.map(l => {
+      const other = dir === 'out' ? l.target : l.source;
+      const b = document.createElement('button');
+      b.type = 'button';
+      const dot = document.createElement('span');
+      dot.className = 'dot';
+      dot.style.setProperty('--hue', CAT_VAR[other.category]);
+      const nm = document.createElement('span');
+      nm.textContent = other.name;
+      const em = document.createElement('em');
+      em.textContent = dir === 'out' ? REL_PHRASE[l.relation] : REL_LABEL[l.relation];
+      b.append(dot, nm, em);
+      b.addEventListener('click', () => select(other));
+      return b;
+    });
+
+    const out = links.filter(l => l.source.id === n.id);
+    const inc = links.filter(l => l.target.id === n.id);
+    document.getElementById('d-out-wrap').hidden = out.length === 0;
+    document.getElementById('d-in-wrap').hidden = inc.length === 0;
+    document.getElementById('d-out').replaceChildren(...rows(out, 'out'));
+    document.getElementById('d-in').replaceChildren(...rows(inc, 'in'));
+
+    detail.hidden = false;
+    detail.scrollTop = 0;
+    paint();
+  }
+  document.getElementById('d-close').addEventListener('click', () => select(null));
+  svg.on('click', () => select(null));
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') select(null); });
+
+  /* ---------- controls ---------- */
+  const catCounts = new Map();
+  nodes.forEach(n => catCounts.set(n.category, (catCounts.get(n.category) || 0) + 1));
+  const relCounts = new Map();
+  links.forEach(l => relCounts.set(l.relation, (relCounts.get(l.relation) || 0) + 1));
+
+  const cats = document.getElementById('cats');
+  CATS.forEach(([key, label]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip';
+    b.setAttribute('aria-pressed', 'true');
+    b.style.setProperty('--hue', CAT_VAR[key]);
+    b.innerHTML = `<span class="dot"></span><span>${label}</span><span class="n">${catCounts.get(key) || 0}</span>`;
+    b.addEventListener('click', () => {
+      if (state.cats.has(key)) state.cats.delete(key); else state.cats.add(key);
+      b.setAttribute('aria-pressed', String(state.cats.has(key)));
+      if (state.selected && !state.cats.has(state.selected.category)) select(null);
+      draw();
+    });
+    cats.appendChild(b);
+  });
+
+  const rels = document.getElementById('rels');
+  RELS.forEach(([key, label, dash]) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip rel';
+    b.setAttribute('aria-pressed', 'true');
+    b.innerHTML = `<svg width="26" height="8" aria-hidden="true">
+        <line x1="0" y1="4" x2="19" y2="4" stroke="var(--edge)" stroke-width="1.4"${dash ? ` stroke-dasharray="${dash}"` : ''}></line>
+        <path d="M19,1.2L25,4L19,6.8" fill="var(--edge)"></path>
+      </svg><span>${label}</span><span class="n">${relCounts.get(key) || 0}</span>`;
+    b.addEventListener('click', () => {
+      if (state.rels.has(key)) state.rels.delete(key); else state.rels.add(key);
+      b.setAttribute('aria-pressed', String(state.rels.has(key)));
+      draw();
+    });
+    rels.appendChild(b);
+  });
+
+  document.getElementById('iso-n').textContent = isolatedCount;
+  document.getElementById('iso').addEventListener('change', e => {
+    state.showIsolated = e.target.checked;
+    draw();
+  });
+
+  const q = document.getElementById('q');
+  q.addEventListener('input', () => { state.query = q.value.trim(); paint(); });
+
+  document.getElementById('reset').addEventListener('click', () => {
+    state.cats = new Set(CATS.map(c => c[0]));
+    state.rels = new Set(RELS.map(r => r[0]));
+    state.showIsolated = false;
+    state.query = '';
+    q.value = '';
+    document.getElementById('iso').checked = false;
+    cats.querySelectorAll('.chip').forEach(b => b.setAttribute('aria-pressed', 'true'));
+    rels.querySelectorAll('.chip').forEach(b => b.setAttribute('aria-pressed', 'true'));
+    select(null);
+    userMoved = false;
+    draw();
+    fitView(true);
+  });
+
+  /* ---------- size ---------- */
+  function resize() {
+    const stage = document.querySelector('.stage').getBoundingClientRect();
+    svg.attr('viewBox', [-stage.width / 2, -stage.height / 2, stage.width, stage.height]);
+    sim.force('x').x(0);
+    sim.force('y').y(0);
+    sim.alpha(0.25).restart();
+  }
+  window.addEventListener('resize', resize);
+  resize();
+  draw();
+})();
+</script>

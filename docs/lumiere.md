@@ -122,6 +122,16 @@ CLI のサブコマンド名は英語のままだが、ドキュメント上は�
 | `term remove NAME` | 用語を削除 |
 | `term learn ID` | 資料本文から用語と関係を抽出（`save` が自動で起動する） |
 
+### Graph command
+
+共通語彙の関係を 1 枚のページに書き出す。リポジトリ直下の `graph.html` をテンプレートとし、`terms`・`term_aliases`・`term_relations`・`reference_terms` の現在の中身を埋め込む。
+
+| command | role |
+| :-- | :-- |
+| `graph [--out PATH]` | 関係グラフの HTML を書き出す（既定の出力先は `tmp/lumiere-graph.html`） |
+
+ページでは円が用語、色が category、大きさが紐付いた資料の数、線が `term_relations` を表す。分類と関係で絞り込め、用語を選ぶと別名と前後の関係が読める。データは書き出した時点の写しなので、語彙が変わったら作り直す。
+
 ## Workflows
 
 検索では、まずタイトルや文面から拾える用語を確認し、その用語で資料を絞り込む。
