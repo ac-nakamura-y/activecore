@@ -2,7 +2,7 @@
 
 ## Overview
 
-Lumiere は BatB のローカル DB で、ファイルは `db/lumiere.sqlite` に置く。Backlog の課題 URL や Google Doc の URL など、`source` が正本で、Lumiere は索引と本文キャッシュを担う。資料本体は `reference` テーブル、クライアント名・会議名・人名などの共通語彙は `terms` ほかのテーブルで管理する。詳細な手順は [CLAUDE.md](../CLAUDE.md) を参照する。
+Lumiere は BatB のローカル DB で、ファイルは `db/lumiere.sqlite` に置く。Backlog の課題 URL や Google Doc の URL など、外部サービスにある資料はそちらが正本で、Lumiere は索引と本文キャッシュを担う。ローカルファイルは `files/` に取り込み、そこを正本とする。資料本体は `reference` テーブル、クライアント名・会議名・人名などの共通語彙は `terms` ほかのテーブルで管理する。詳細な手順は [CLAUDE.md](../CLAUDE.md) を参照する。
 
 ## Schema
 
@@ -26,8 +26,23 @@ erDiagram
 | `id` | UUID |
 | `title` | 会議名・課題名など |
 | `content` | 本文キャッシュ |
-| `source` | 正本の URL またはパス |
+| `source` | 正本の URL、または `files/` 内のファイルの絶対パス |
 | `created_at` / `updated_at` | 登録・更新日時 |
+
+### File storage
+
+外部サービスに正本を持たない資料は、リポジトリ内の `files/` に置く。`save --source` にローカルファイルのパスを渡すと、`files/<ファイル名>` へコピーし、そのコピーの絶対パスを `source` に記録する。元のファイルが一時ディレクトリや別のワークツリーにあっても、資料は消えない。
+
+| 入力 | 記録される `source` |
+| :-- | :-- |
+| `/tmp/report.md` | `<repo>/files/report.md`（コピーを作る） |
+| `file:///tmp/report.md` | `<repo>/files/report.md`（同上） |
+| `<repo>/files/report.md` | そのまま（コピーしない） |
+| URL | そのまま |
+
+同一性はファイル名で決まる。同じファイル名で `save` すると同じ 1 件を更新するため、日付や版を名前に含めて区別する。`files/` のファイル自体を置き換えるときは、そのファイルを上書きしてから `save` する。`--content-file` は本文キャッシュだけを更新し、`files/` のファイルには書き戻さない。
+
+`files/` は `db/` と同じくローカル資産であり、git の追跡対象にしない。
 
 ### Vocabulary layer
 
@@ -155,6 +170,9 @@ batb save ... --term トリプルエス --term FDE
 | テーブル `refs` | `reference` |
 | 列 `summary` | 削除 |
 | `tags` / `ref_tags` / `tag_rules` | `terms` / `reference_terms` / `term_aliases` |
+| ローカルパスの `source`（ `file://` 形式を含む） | `files/` へ取り込み、コピーの絶対パス |
 | category `tool` | `system` |
 
 変換は 1 回の実行で完結し、旧テーブルは変換後に削除する。変換中にエラーが起きた場合は 1 件も書き換えずに中断する。
+
+ローカルパスの取り込みでは、元のファイルが残っていればそれをコピーし、失われていれば `content` から復元する。復元もできない資料があるときは、1 件も書き換えずに中断する。
